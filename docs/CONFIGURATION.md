@@ -34,6 +34,7 @@
 
 - `node scripts/setup-betterstack.ts [--monitors]`：建 log source、errors app（加 `--monitors` 再建 uptime monitor），写回 `<SERVICE>__BETTERSTACK_*`
 - `node scripts/setup-resend-domain.ts [--wait]`：在 Resend 添加 `RESEND_DOMAIN`，把 DKIM / SPF / bounce MX + DMARC 记录写入 Cloudflare（通过已登录的 `cf` CLI，DNS only），触发验证，写回 `EMAIL_FROM`
+- `node scripts/env-sync.ts --railway`：把每个 service 自己的 secret 推到 Railway（stdin 传值，不进命令行历史）；`--local`：生成本地 `apps/*/.env`（本地不向生产 Better Stack 发日志，email 默认 `EMAIL_PROVIDER=console`）
 
 ---
 
@@ -119,7 +120,7 @@ web ──(无鉴权, CORS 白名单)──► intake ──K_fig──► figur
 - 每个被调用方只认自己的 `INTERNAL_API_KEY`；调用方用 `<TARGET>_API_KEY` 保存对应值。
 - 三把 key 互不相同 → 任一泄露只影响一跳。
 - 请求头：`Authorization: Bearer <key>`；校验用 `crypto.timingSafeEqual`。`/health` 不鉴权。
-- **Railway 引用变量**（`${{service.VAR}}`）让调用方直接引用被调用方的 key 和域名：值只维护一处，轮换时只改被调用方，调用方重新部署即拿到新值。
+- **Railway 引用变量**让调用方直接引用被调用方的 key 和域名：在 `.railway/railway.ts` 里写作 `chase.env.INTERNAL_API_KEY`（类型化引用）或 `https://${{chase.RAILWAY_PUBLIC_DOMAIN}}`。值只维护一处，轮换时只改被调用方，调用方重新部署即拿到新值。
 
 ---
 
@@ -173,14 +174,14 @@ pnpm --filter @heloc/intake dev                # node --watch --env-file-if-exis
 
 ## 5. 各平台具体操作
 
-| 平台             | 操作                                                                                                                                                                                                                                     |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Supabase**     | 建 Project（region 选离 Railway 近的 `us-east`/`us-west`）→ 复制 Session pooler 连接串 → 迁移后对 4 张表 `ENABLE ROW LEVEL SECURITY`（不建 policy，等于关闭 Data API 对这些表的匿名访问）                                                |
-| **Resend**       | 添加并验证发信域名（DNS: SPF/DKIM）→ 建 Sending-access API key。若暂时没有域名，只能用 `onboarding@resend.dev` 发到 **Resend 账号自己的邮箱**，测试收件箱就用这个邮箱                                                                    |
-| **Railway**      | 1 个 Project、4 个 Service，**Service 名固定为 `intake` / `figure-mock` / `chase` / `email`**（引用变量依赖这些名字），均从 GitHub 部署；变量在各 Service 的 Variables 页填，**不用 Shared Variables**（避免 secret 扩散到所有 service） |
-| **Vercel**       | Import `heloc-demo`，Root Directory = `apps/web`，配置 `NEXT_PUBLIC_API_URL`（Production + Preview）                                                                                                                                     |
-| **Better Stack** | 全部由 `scripts/setup-betterstack.ts` 通过 API 创建：每个 service 一个 Telemetry source + 一个 Errors application（与该 source 关联，日志和异常可互相跳转）；Uptime：4 个 `/health` monitor；Alert：Email（+ 可选 Slack）                |
-| **GitHub**       | 仓库 Settings → Variables 填公网 URL；开启 Secret scanning + Push protection（public 仓库免费）                                                                                                                                          |
+| 平台             | 操作                                                                                                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Supabase**     | 建 Project（region 选离 Railway 近的 `us-east`/`us-west`）→ 复制 Session pooler 连接串 → 迁移后对 4 张表 `ENABLE ROW LEVEL SECURITY`（不建 policy，等于关闭 Data API 对这些表的匿名访问）                                                                                                                           |
+| **Resend**       | 添加并验证发信域名（DNS: SPF/DKIM）→ 建 Sending-access API key。若暂时没有域名，只能用 `onboarding@resend.dev` 发到 **Resend 账号自己的邮箱**，测试收件箱就用这个邮箱                                                                                                                                               |
+| **Railway**      | 1 个 Project、4 个 Service（`intake` / `figure-mock` / `chase` / `email`），全部由 `.railway/railway.ts`（IaC）定义并 `railway config apply`；secret 在 IaC 中声明为 `preserve()`，值由 `node scripts/env-sync.ts --railway` 从根 `.env` 经 stdin 推送；**不用 Shared Variables**（避免 secret 扩散到所有 service） |
+| **Vercel**       | Import `heloc-demo`，Root Directory = `apps/web`，配置 `NEXT_PUBLIC_API_URL`（Production + Preview）                                                                                                                                                                                                                |
+| **Better Stack** | 全部由 `scripts/setup-betterstack.ts` 通过 API 创建：每个 service 一个 Telemetry source + 一个 Errors application（与该 source 关联，日志和异常可互相跳转）；Uptime：4 个 `/health` monitor；Alert：Email（+ 可选 Slack）                                                                                           |
+| **GitHub**       | 仓库 Settings → Variables 填公网 URL；开启 Secret scanning + Push protection（public 仓库免费）                                                                                                                                                                                                                     |
 
 ---
 

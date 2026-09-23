@@ -97,8 +97,9 @@ heloc-demo/
 后端**无构建步骤**：Node 24 原生 type stripping 直接运行 `node apps/<name>/src/main.ts`（tsconfig 开 `erasableSyntaxOnly`，禁止 enum 等非可擦除语法）。workspace packages 直接导出 `src/*.ts`，Next.js 通过 `transpilePackages` 消费。
 不打包也避免了 pino transport 在 bundle 后解析不到模块的问题。Node 版本由 `.node-version` 统一（CI 与 Railpack 都读它）。
 
-Railway 每个 service 用 `apps/<name>/railway.json`（config-as-code：build/start 命令、`watchPatterns`、`healthcheckPath=/health`，intake 额外 `preDeployCommand` 跑 `drizzle-kit migrate`）。
-Service 的 Root Directory 保持仓库根（需要 workspace），在 Service Settings 里把 Config File Path 指向 `/apps/<name>/railway.json`。
+Railway 全部用 **Infrastructure as Code** 描述：`.railway/railway.ts`（`railway config plan` / `railway config apply`）。
+其中包含 4 个 service 的 GitHub 来源、构建/启动命令、`watchPatterns`、`/health` 健康检查、重启策略、区域（`iad`，靠近 Supabase us-east-2）、公网域名和全部非 secret 变量；
+服务间的 URL / key 用类型化引用（如 `chase.env.INTERNAL_API_KEY`）。Railway 已弃用 `railway.json`（config-as-code），故不再使用。
 
 ---
 
@@ -150,7 +151,7 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 - [x] pnpm workspace、tsconfig.base、ESLint(flat) + Prettier、Vitest
 - [x] `packages/config`、`packages/logger`、`packages/server-kit`、`packages/contracts`
-- [x] 5 个 app 骨架（4 个 Fastify 服务只有 `/health`；web 占位页）+ 每个 app 的 `.env.example` / `railway.json`
+- [x] 5 个 app 骨架（4 个 Fastify 服务只有 `/health`；web 占位页）+ 每个 app 的 `.env.example`
 - [x] `pnpm check:env`：`.env.example` 与 env schema 不一致时 CI 失败
 - [x] GitHub Actions CI
 
