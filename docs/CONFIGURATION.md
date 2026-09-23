@@ -131,6 +131,8 @@ npx wrangler deploy                       # 代码；secret 已存在则保留
 npx wrangler deploy --secrets-file <tmp>  # 需要更新 secret 时（临时文件 600 权限，用完即删）
 ```
 
+告警接收人：根 `.env` 的 `ALERT_EMAIL`（`simonarthur2012@gmail.com`）。Better Stack 免费版没有 Escalation Policy，所以由 `setup-betterstack.ts --alerts` 把它设为默认值班表的 on-call（一年），5 个 monitor 与日志告警都用 email 通知值班 / 团队（团队只有这一人）。
+
 Cloudflare Email Routing：`linkerclaw.ai` 开启 subaddressing；规则 `reply@linkerclaw.ai` → Worker `heloc-email-inbound`；`user@linkerclaw.ai` → 转发到测试 Gmail。
 
 ## 3. 服务间鉴权：每一跳一把 key
