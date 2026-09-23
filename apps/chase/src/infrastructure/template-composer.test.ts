@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Chase, OutcomeNotice } from '../domain/chase.ts';
-import { TemplateComposer } from './template-composer.ts';
+import { replyMailto, TemplateComposer } from './template-composer.ts';
 
 const chase = (overrides: Partial<Chase> = {}): Chase => ({
   chaseId: 'c1',
@@ -26,7 +26,8 @@ describe('TemplateComposer', () => {
         '- Proof of income',
         '  Reason: Income requires verification.',
         '',
-        'Simply reply to this email and attach the documents — we will pick them up automatically.',
+        'Just reply to this email and attach the documents — we will pick them up automatically.',
+        '(Or send them to reply+c1@linkerclaw.ai.)',
         '',
         'Thanks.',
       ].join('\n'),
@@ -34,6 +35,29 @@ describe('TemplateComposer', () => {
     expect(message.html).toContain(
       '<li><strong>Proof of income</strong><br />Reason: Income requires verification.</li>',
     );
+  });
+
+  it('offers a one-click reply button addressed to the Chase Reply Address', () => {
+    const { html } = new TemplateComposer().compose(chase());
+    const href = replyMailto(chase());
+    expect(href).toBe(
+      'mailto:reply+c1@linkerclaw.ai?subject=Re%3A%20Additional%20documents%20required%20for%20your%20HELOC%20application&body=Hi%2C%0A%0APlease%20find%20my%20documents%20attached.%0A%0AThanks',
+    );
+    expect(html).toContain('>Reply with documents</a>');
+    expect(html).toContain(`href="${href.replace(/&/g, '&#38;')}"`);
+  });
+
+  it('builds a mailto that decodes to the Reply Address and a Re: subject', () => {
+    const url = new URL(replyMailto(chase()));
+    expect(url.protocol).toBe('mailto:');
+    expect(url.pathname).toBe('reply+c1@linkerclaw.ai');
+    expect(url.searchParams.get('subject')).toBe(
+      'Re: Additional documents required for your HELOC application',
+    );
+  });
+
+  it('declares UTF-8 so dashes and names render correctly in every client', () => {
+    expect(new TemplateComposer().compose(chase()).html).toContain('<meta charset="utf-8" />');
   });
 
   it('lists every requested document', () => {

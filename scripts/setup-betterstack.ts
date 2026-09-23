@@ -3,7 +3,8 @@
  *   - one Telemetry (logs) source per service
  *   - one Errors application per service (Sentry-SDK compatible), correlated with its logs
  *   - with --monitors: one uptime monitor per service /health (needs <SERVICE>__PUBLIC_URL)
- *   - with --alerts: a saved query of error/fatal logs across services + an email alert on it
+ *   - with --alerts: a saved query of error/fatal logs across services + an email alert on it,
+ *     and ALERT_EMAIL made the current on-call (free plan has no escalation policies)
  *
  * Reads the admin token BETTER_STACK_API_KEY from the repo-root .env and writes the
  * per-service ingestion credentials back into it. Prints ids and hosts only, never tokens.
@@ -198,12 +199,51 @@ if (process.argv.includes('--alerts')) {
       ).data,
   );
 
+  // Everything HELOC alerts on goes to ALERT_EMAIL. Escalation policies need a paid
+  // Better Stack plan, so on the free plan that person is made the current on-call
+  // (monitors and alerts notify on-call / team by email).
+  const alertEmail = requireVar(env, 'ALERT_EMAIL');
+  const calendar = (await listAll('https://uptime.betterstack.com/api/v2/on-calls')).find(
+    (c) => c.attributes.default_calendar,
+  );
+  if (!calendar) throw new Error('no default on-call calendar');
+  const onCall = (await api(
+    'GET',
+    `https://uptime.betterstack.com/api/v2/on-calls/${calendar.id}`,
+  )) as {
+    data: { relationships: { on_call_users: { data: { id: string }[] } } };
+    included?: Resource[];
+  };
+  const onCallEmails = (onCall.included ?? []).map((u) => u.attributes.email);
+  if (onCallEmails.includes(alertEmail)) {
+    console.log(`  on-call: ${alertEmail} (already)`);
+  } else {
+    const now = new Date();
+    await api('POST', `https://uptime.betterstack.com/api/v2/on-calls/${calendar.id}/events`, {
+      starts_at: now.toISOString(),
+      ends_at: new Date(now.getTime() + 365 * 24 * 3600 * 1000).toISOString(),
+      users: [alertEmail],
+    });
+    console.log(`  on-call: ${alertEmail} (for the next 365 days)`);
+  }
+  const monitors = (await listAll('https://uptime.betterstack.com/api/v2/monitors')).filter((m) =>
+    String(m.attributes.pronounceable_name).startsWith(`${PROJECT}-`),
+  );
+  for (const monitor of monitors) {
+    if (!monitor.attributes.email) {
+      await api('PATCH', `https://uptime.betterstack.com/api/v2/monitors/${monitor.id}`, {
+        email: true,
+      });
+    }
+    console.log(`  monitor "${String(monitor.attributes.pronounceable_name)}" emails on-call`);
+  }
+
   const alertName = `${PROJECT}: errors logged`;
   const alerts = (await listAll('https://telemetry.betterstack.com/api/v2/alerts')).filter(
     (a) => a.attributes.name === alertName,
   );
   if (alerts.length > 0) {
-    console.log(`  alert "${alertName}" exists (id ${alerts[0]!.id})`);
+    console.log(`  alert "${alertName}" exists (id ${alerts[0]!.id}); emails the team`);
   } else {
     const created = (await api(
       'POST',
@@ -221,7 +261,7 @@ if (process.argv.includes('--alerts')) {
         email: true,
       },
     )) as { data: Resource };
-    console.log(`  alert "${alertName}" created (id ${created.data.id}); emails the current team`);
+    console.log(`  alert "${alertName}" created (id ${created.data.id}); emails the team`);
   }
 }
 
