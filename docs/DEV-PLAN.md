@@ -97,10 +97,100 @@ heloc-demo/
 后端**无构建步骤**：Node 24 原生 type stripping 直接运行 `node apps/<name>/src/main.ts`（tsconfig 开 `erasableSyntaxOnly`，禁止 enum 等非可擦除语法）。workspace packages 直接导出 `src/*.ts`，Next.js 通过 `transpilePackages` 消费。
 不打包也避免了 pino transport 在 bundle 后解析不到模块的问题。Node 版本由 `.node-version` 统一（CI 与 Railpack 都读它）。
 
-Railway 每个 service 用 `apps/<name>/railway.json`（config-as-code：build/start 命令、`watchPatterns`、`healthcheckPath=/health`，intake 额外 `preDeployCommand` 跑 `drizzle-kit migrate`）。
-Service 的 Root Directory 保持仓库根（需要 workspace），在 Service Settings 里把 Config File Path 指向 `/apps/<name>/railway.json`。
+Railway 全部用 **Infrastructure as Code** 描述：`.railway/railway.ts`（`railway config plan` / `railway config apply`）。
+其中包含 4 个 service 的 GitHub 来源、构建/启动命令、`watchPatterns`、`/health` 健康检查、重启策略、区域（`iad`，靠近 Supabase us-east-2）、公网域名和全部非 secret 变量；
+服务间的 URL / key 用类型化引用（如 `chase.env.INTERNAL_API_KEY`）。Railway 已弃用 `railway.json`（config-as-code），故不再使用。
 
 ---
+
+### 2.4 领域设计（DDD）
+
+> 术语以各上下文的 `CONTEXT.md` 为准，上下文关系见 [CONTEXT-MAP.md](../CONTEXT-MAP.md)，关键决策见 [docs/adr](./adr)。
+
+#### 限界上下文
+
+| 上下文            | 服务               | 子域类型         | 领域模型的重心                                    |
+| ----------------- | ------------------ | ---------------- | ------------------------------------------------- |
+| Lead Intake       | `apps/intake`      | 核心域           | `Lead` 聚合：状态机、预审结果、Chase、领域事件    |
+| Prequalification  | `apps/figure-mock` | 外部系统（模拟） | 预审策略（规则 + Offer 计算），无持久化           |
+| Borrower Outreach | `apps/chase`       | 支撑域           | 把 Chase 写成 Chase Message（Composer），无持久化 |
+| Email Delivery    | `apps/email`       | 通用域           | Outbound Email + 可替换的 Email Provider          |
+
+`packages/contracts` 是 **Published Language**（线上契约 DTO），不是共享领域模型：每个服务在接口层 / 防腐层把 DTO 映射为自己的领域类型。
+
+#### 每个服务的分层（六边形）
+
+```text
+apps/<service>/src/
+├── domain/            实体、值对象、聚合、领域事件、领域服务、仓储接口 —— 纯 TypeScript
+├── application/       用例（命令 / 查询），定义出站端口（gateway 接口），编排领域对象
+├── infrastructure/    端口实现：Drizzle 仓储、HTTP gateway（防腐层）、Resend 适配器、Composer
+├── interface/http/    Fastify 路由：用 contracts 校验 DTO → 命令 → 用例 → DTO
+├── app.ts             组合根：把实现注入用例（唯一知道所有层的地方）
+└── main.ts            读配置、创建 logger、启动
+```
+
+依赖只能向内：`interface`、`infrastructure` → `application` → `domain`。用 ESLint `no-restricted-imports` 强制：
+
+- `domain/` 不得 import `application/`、`infrastructure/`、`interface/`，也不得 import `fastify`、`drizzle-orm`、`zod`、`@heloc/contracts`、`@heloc/server-kit`
+- `application/` 不得 import `infrastructure/`、`interface/` 以及上述框架包
+
+#### Lead Intake：`Lead` 聚合
+
+| 组成                                    | 类型               | 说明                                                                                                  |
+| --------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `Lead`                                  | 聚合根             | `id`、`status`、`borrower`、`property`、`creditProfile`、`purpose`、`decision?`、`chase?`、待发布事件 |
+| `Borrower`、`Property`、`CreditProfile` | 值对象             | 创建时校验不变量（金额非负、房价 > 0 …）                                                              |
+| `PrequalDecision`                       | 值对象（判别联合） | `Approved{offer}` \| `Rejected{reason}` \| `NeedMoreDocuments{missingDocuments}`                      |
+| `Offer`、`MissingDocument`              | 值对象             |                                                                                                       |
+| `Chase`                                 | 聚合内实体         | `id`、`status(pending/sent/failed)`、`message?`、`emailMessageId?`、`sentAt?`                         |
+| `LeadEvent`                             | 领域事件           | `lead.created` … `email.failed`、`lead.replayed`、`lead.failed`                                       |
+
+聚合行为（每个方法守护自己的前置条件并记录事件；非法转换抛领域错误）：
+
+| 方法                       | 前置条件                                  | 结果 / 事件                                                                                                            |
+| -------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Lead.submit(input)`       | —                                         | `submitted`；`lead.created`                                                                                            |
+| `startPrequalification()`  | 尚无 decision                             | `processing`；`figure.requested`                                                                                       |
+| `recordDecision(decision)` | `processing`，尚无 decision               | `approved` / `rejected` / `need_more_documents`；`figure.*`                                                            |
+| `openChase(chaseId)`       | decision 为 NeedMoreDocuments，尚无 Chase | Chase `pending`；`chase.created`                                                                                       |
+| `markChaseSent(receipt)`   | Chase 为 `pending` / `failed`             | Chase `sent`，Lead `chase_sent`；`email.sent`                                                                          |
+| `markChaseFailed(reason)`  | Chase 未 `sent`                           | Chase `failed`，Lead `failed`；`email.failed`                                                                          |
+| `fail(step, reason)`       | 未到终态                                  | `failed`；`lead.failed`                                                                                                |
+| `replay()`                 | —                                         | `lead.replayed`                                                                                                        |
+| `nextStep()`（查询）       | —                                         | `prequalify` \| `chase` \| `done`，**由 decision / Chase 推导而非 status**，所以 `failed` 的 Lead 也知道该从哪一步继续 |
+
+不变量（ADR-0003）：一个 Lead 至多一个 decision 且不可变；Chase 只存在于 NeedMoreDocuments 的 Lead；`chase_sent` ⇔ Chase 已发出。
+
+应用层：
+
+| 用例              | 流程                                                                                                                                                                                                                                |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SubmitLead`      | `Lead.submit` → 保存 → `AdvanceLead`                                                                                                                                                                                                |
+| `ReplayLead`      | 加载 → `lead.replay()` → 保存 → `AdvanceLead`                                                                                                                                                                                       |
+| `AdvanceLead`     | 循环 `lead.nextStep()`：`prequalify` → `PrequalGateway.softPull` → `recordDecision`；`chase` → `openChase`（如需）→ `ChaseGateway.send` → `markChaseSent`。**每一步后保存**；gateway 失败 → `fail` / `markChaseFailed` 后保存并返回 |
+| `GetLead`（查询） | 读模型直接查询 lead + decision + chase + events，不经聚合（CQRS-lite）                                                                                                                                                              |
+
+端口：`LeadRepository`（domain，保存聚合时在**同一事务**写入新事件到 `lead_events`）、`PrequalGateway`、`ChaseGateway`、`Clock`、`IdGenerator`（application）。
+防腐层：`FigureHttpGateway` 把 Figure 的 `need-more-documents` / `documents` 翻译为 `NeedMoreDocuments` / `MissingDocument`，原始响应存入 `figure_decisions.raw_response` 供审计。
+演示用的 Forced Outcome / Injected Fault 不进领域模型：接口层读取请求头，作为用例的 `PrequalScenario` 选项透传给 gateway。
+
+#### 其他上下文
+
+| 上下文            | domain                                                                                                                                            | application                                           | infrastructure                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Prequalification  | `SoftPullPolicy`（规则：Available Equity 不足 → rejected；按 Credit Band → approved / need-more-documents）、`OfferCalculator`、`CreditBand` 排序 | `RunSoftPull`（应用 Forced Outcome / Injected Fault） | —                                                                                                |
+| Borrower Outreach | `Chase`、`DocumentRequest`（材料类型 → 借款人可读名称）、`ChaseMessage`                                                                           | `SendChase`；端口 `Composer`、`EmailGateway`          | `TemplateComposer`（将来 `LlmComposer`）、`EmailHttpGateway`（带 `Idempotency-Key: chase:{id}`） |
+| Email Delivery    | `OutboundEmail`、`DeliveryReceipt`、`Sender`                                                                                                      | `SendEmail`；端口 `EmailProvider`                     | `ResendProvider`、`ConsoleProvider`                                                              |
+
+#### 分层测试
+
+| 层             | 测试方式                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| domain         | 纯单元测试：状态机每条合法 / 非法转换、不变量、`nextStep()` 推导、事件序列               |
+| application    | 内存 fake（仓储、gateway）：三条路径、各步失败、Replay 断点续跑且只发一封                |
+| infrastructure | Drizzle 仓储用 PGlite（聚合 + 事件原子保存）；HTTP gateway 用本地 Fastify 桩验证防腐翻译 |
+| interface      | `fastify.inject`：DTO 校验、状态码、错误映射                                             |
 
 ## 3. 数据库
 
@@ -130,7 +220,7 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ---
 
-## 5. 时间线（约 9 小时）
+## 5. 时间线（约 9.5 小时）
 
 > 原则：**先打通部署骨架，再填业务**。所有外部依赖（DNS 验证、平台账号）放在最前面异步进行。
 
@@ -150,7 +240,7 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 - [x] pnpm workspace、tsconfig.base、ESLint(flat) + Prettier、Vitest
 - [x] `packages/config`、`packages/logger`、`packages/server-kit`、`packages/contracts`
-- [x] 5 个 app 骨架（4 个 Fastify 服务只有 `/health`；web 占位页）+ 每个 app 的 `.env.example` / `railway.json`
+- [x] 5 个 app 骨架（4 个 Fastify 服务只有 `/health`；web 占位页）+ 每个 app 的 `.env.example`
 - [x] `pnpm check:env`：`.env.example` 与 env schema 不一致时 CI 失败
 - [x] GitHub Actions CI
 
@@ -158,31 +248,43 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ### Phase 2 — Walking Skeleton 上线（1h）
 
-- [ ] 4 个后端服务只实现 `/health`，全部部署到 Railway，拿到公网域名
-- [ ] 按 CONFIGURATION §2 填 Railway 变量（引用变量串起 URL 和 key）
-- [ ] web 部署一个占位页到 Vercel
-- [ ] Better Stack Uptime：4 个 `/health` monitor + Email alert
+- [x] 4 个后端服务只实现 `/health`，全部部署到 Railway（`iad`），拿到公网域名 —— `.railway/railway.ts`
+- [x] Railway 变量：非 secret 与服务间引用在 IaC 中声明；secret 由 `scripts/env-sync.ts --railway` 推送
+- [x] web 部署占位页到 Vercel（`heloc-demo.vercel.app`，`NEXT_PUBLIC_API_URL` 已配置）
+- [x] Better Stack：4 个 log source + 4 个 errors app + 4 个 `/health` uptime monitor（均 up）
+- [x] Resend 发信域名 `linkerclaw.ai` 已验证；Cloudflare Email Routing 把 `user@linkerclaw.ai` 转发到测试 Gmail
 - [ ] GitHub Repository Variables 填 URL；`scripts/smoke.ts` 的 health 部分跑通
+
+| 服务        | 公网地址                                      |
+| ----------- | --------------------------------------------- |
+| web         | https://heloc-demo.vercel.app                 |
+| intake      | https://intake-production-12aa.up.railway.app |
+| figure-mock | https://figure-mock-production.up.railway.app |
+| chase       | https://chase-production-4070.up.railway.app  |
+| email       | https://email-production-48c5.up.railway.app  |
 
 **验收**：5 个公网 URL 可访问，Better Stack 显示 4 个 Healthy。**这之后每次 merge main 自动部署。**
 
-### Phase 3 — 数据层 + Figure Mock + Intake 编排（2h）
+### Phase 3 — 领域模型 + 数据层 + Figure Mock + Intake 编排（2.5h）
 
-- [ ] Drizzle schema + 迁移 + RLS；Railway pre-deploy 迁移
-- [ ] figure-mock：确定性规则、Offer 计算、`X-Mock-Outcome` / `X-Mock-Fault`
-- [ ] intake：`POST /v1/leads`、`GET /v1/leads/:id`（含 decision、chase、events 时间线）
-- [ ] 集成测试（PGlite）覆盖 approved / rejected / need-more-documents(chase 用 fake)
+- [ ] ESLint 分层依赖规则（domain / application 不得依赖外层与框架）
+- [ ] figure-mock：`SoftPullPolicy`、`OfferCalculator`（domain）→ `RunSoftPull`（application）→ 路由（interface）；Forced Outcome / Injected Fault
+- [ ] intake domain：`Lead` 聚合、值对象、`PrequalDecision`、`Chase`、领域事件、`nextStep()`，全覆盖单元测试
+- [ ] intake application：`SubmitLead` / `ReplayLead` / `AdvanceLead` / `GetLead` + 端口；用内存 fake 测试
+- [ ] intake infrastructure：Drizzle schema + 迁移 + RLS、`DrizzleLeadRepository`（聚合 + 事件同事务）、`FigureHttpGateway`（防腐层）；PGlite 测试；Railway pre-deploy 迁移
+- [ ] intake interface：`POST /v1/leads`、`GET /v1/leads/:id`、`POST /v1/leads/:id/replay`、CORS
+- [ ] contracts：Figure 契约中的 `missingDocument` 改名 `requiredDocument`（与 Prequalification 术语一致，线上格式不变）
 
-**验收**：线上 curl 三种 outcome，Supabase 里能看到 leads / figure_decisions / lead_events。
+**验收**：线上 curl 三种 outcome（chase 暂用 fake 或未部署时标记 failed），Supabase 里能看到 leads / figure_decisions / lead_events。
 
-### Phase 4 — Chase + Email Service（1.5h）
+### Phase 4 — Borrower Outreach + Email Delivery（1.5h）
 
-- [ ] email-service：`POST /v1/send`、`EmailProvider` 接口、`ResendProvider`、幂等 key 透传
-- [ ] chase：`POST /v1/chases`、`EmailComposer` 接口 + `TemplateComposer`（HTML + text），文档类型 → 人类可读名称映射（`income_verification` → “Proof of income”）
-- [ ] intake 接入 chase；`POST /v1/leads/:id/replay` 断点续跑
+- [ ] email：`OutboundEmail`（domain）→ `SendEmail` + `EmailProvider` 端口（application）→ `ResendProvider` / `ConsoleProvider`（infrastructure）→ `POST /v1/send`；幂等 key 透传给 Resend
+- [ ] chase：`DocumentRequest` / `ChaseMessage`（domain）→ `SendChase` + `Composer` / `EmailGateway` 端口 → `TemplateComposer`（HTML + text）、`EmailHttpGateway` → `POST /v1/chases`
+- [ ] intake：`ChaseHttpGateway` 接入；Replay 端到端
 - [ ] 测试：chase 失败 → failed → replay → 只发一封
 
-**验收**：need-more-documents 线上提交后，测试邮箱真实收到邮件；`chases.email_message_id` 与 Resend 后台一致。
+**验收**：need-more-documents 线上提交后，`user@linkerclaw.ai`（转发到测试 Gmail）真实收到邮件；`chases.email_message_id` 与 Resend 后台一致。
 
 ### Phase 5 — 前端（1.5h）
 
