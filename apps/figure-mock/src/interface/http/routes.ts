@@ -33,6 +33,9 @@ export function softPullRoutes(
     if (fault) {
       log.warn({ event: 'soft_pull.fault_injected', fault }, `injected fault: ${fault}`);
       if (fault === 'error') throw new HttpError(503, 'injected_fault', 'Injected fault: error');
+      if (fault === 'exception') {
+        throw new Error('Injected fault: unhandled exception during soft pull');
+      }
       await new Promise((resolve) => setTimeout(resolve, faultDelayMs));
     }
 

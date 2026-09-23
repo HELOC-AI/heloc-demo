@@ -15,3 +15,6 @@ coverage/
 .DS_Store
 *.log
 next-env.d.ts
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

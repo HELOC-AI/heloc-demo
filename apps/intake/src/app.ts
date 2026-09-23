@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import { HEADERS } from '@heloc/contracts';
 import type { IntakeConfig } from '@heloc/config';
 import type { Logger } from '@heloc/logger';
-import { createServer, createServiceClient } from '@heloc/server-kit';
+import { createServer, createServiceClient, type ErrorReporter } from '@heloc/server-kit';
 import { createLeadUseCases } from './application/lead-use-cases.ts';
 import type {
   ChaseGateway,
@@ -26,6 +26,7 @@ export interface AppDeps {
   config: IntakeConfig;
   logger: Logger;
   version: string;
+  errorReporter?: ErrorReporter;
   /** Persistence adapter (Drizzle in production, PGlite / in-memory in tests). */
   store: LeadRepository & LeadTimeline;
   /** Liveness probe for the database, reported by /health. */
@@ -77,6 +78,7 @@ export function buildApp(deps: AppDeps) {
     version,
     logger,
     healthChecks: { db: deps.pingDatabase },
+    errorReporter: deps.errorReporter,
   });
 
   // The quiz calls intake directly from the browser.

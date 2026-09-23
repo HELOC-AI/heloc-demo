@@ -4,8 +4,11 @@ import { CREDIT_BANDS, INCOME_BANDS, US_STATES } from './common.ts';
 export const MOCK_OUTCOMES = ['approved', 'rejected', 'need-more-documents'] as const;
 export type MockOutcome = (typeof MOCK_OUTCOMES)[number];
 
-/** Injected failures, used to demo failure modes and replay. */
-export const MOCK_FAULTS = ['timeout', 'error'] as const;
+/**
+ * Injected failures, used to demo failure modes and replay: `timeout` stalls, `error`
+ * returns a handled 503, `exception` throws an unhandled error (shows up in Better Stack Errors).
+ */
+export const MOCK_FAULTS = ['timeout', 'error', 'exception'] as const;
 export type MockFault = (typeof MOCK_FAULTS)[number];
 
 export const DOCUMENT_TYPES = [

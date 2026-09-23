@@ -91,6 +91,24 @@ describe('POST /v1/soft-pull', () => {
     expect(res.json().error).toBe('injected_fault');
   });
 
+  it('injects an unhandled exception that is reported as an error', async () => {
+    const captured: unknown[] = [];
+    app = buildApp({
+      config: loadConfig(figureMockEnv, { INTERNAL_API_KEY: KEY }),
+      logger: createLogger({ service: 'test', destination: silent }).logger,
+      version: 'test',
+      errorReporter: { capture: (err) => captured.push(err), flush: async () => {} },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/soft-pull',
+      headers: { ...auth, 'x-mock-fault': 'exception' },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(500);
+    expect(captured).toHaveLength(1);
+  });
+
   it('injects a delay for the timeout fault, then answers', async () => {
     const started = Date.now();
     const res = await softPull(body, { 'x-mock-fault': 'timeout' });

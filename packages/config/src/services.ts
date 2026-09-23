@@ -16,8 +16,9 @@ const base = z.object({
   HOST: z.string().default('::'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   LOG_PRETTY: z.stringbool().default(false),
-  // Injected by Railway; used as the /health version.
+  // Injected by Railway; used as the /health version and error-report environment.
   RAILWAY_GIT_COMMIT_SHA: z.string().optional(),
+  RAILWAY_ENVIRONMENT_NAME: z.string().optional(),
   // Better Stack. All optional so local dev works without them.
   BETTERSTACK_SOURCE_TOKEN: z.string().optional(),
   BETTERSTACK_INGESTING_HOST: z.string().optional(),

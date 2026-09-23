@@ -94,6 +94,21 @@ describe('errors and request ids', () => {
     expect(res.json()).toMatchObject({ error: 'invalid_request', details: [{ path: 'n' }] });
   });
 
+  it('reports only unexpected errors, with request context', async () => {
+    const captured: { error: unknown; context?: object }[] = [];
+    build({
+      errorReporter: {
+        capture: (error, context) => captured.push({ error, context }),
+        flush: async () => {},
+      },
+    });
+    await app.inject({ method: 'GET', url: '/v1/boom', headers: auth });
+    await app.inject({ method: 'POST', url: '/v1/echo', headers: auth, payload: { n: 'x' } });
+    expect(captured).toHaveLength(1);
+    expect((captured[0]?.error as Error).message).toBe('kaboom');
+    expect(captured[0]?.context).toMatchObject({ method: 'GET', route: '/v1/boom' });
+  });
+
   it('hides internal errors behind a 500', async () => {
     const res = await build().inject({ method: 'GET', url: '/v1/boom', headers: auth });
     expect(res.statusCode).toBe(500);
