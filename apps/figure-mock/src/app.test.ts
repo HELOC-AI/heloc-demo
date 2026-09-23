@@ -1,5 +1,5 @@
 import { Writable } from 'node:stream';
-import { softPullResponseSchema } from '@heloc/contracts';
+import { documentReviewResponseSchema, softPullResponseSchema } from '@heloc/contracts';
 import { figureMockEnv, loadConfig } from '@heloc/config';
 import { createLogger } from '@heloc/logger';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -120,5 +120,45 @@ describe('POST /v1/soft-pull', () => {
     const res = await softPull({ ...body, credit_band: 'excellent' });
     expect(res.statusCode).toBe(400);
     expect(res.json().details[0].path).toBe('credit_band');
+  });
+});
+
+describe('POST /v1/document-reviews', () => {
+  const review = {
+    ...body,
+    documents: [{ type: 'income_verification', reason: 'Income requires verification' }],
+    attachments: [{ filename: 'paystub.pdf', content_type: 'application/pdf', size: 12_345 }],
+  };
+  const post = (payload: object, headers: Record<string, string> = {}) =>
+    build().inject({
+      method: 'POST',
+      url: '/v1/document-reviews',
+      headers: { ...auth, ...headers },
+      payload,
+    });
+
+  it('approves once documents are in, in the contract shape', async () => {
+    const res = await post(review);
+    expect(res.statusCode).toBe(200);
+    const parsed = documentReviewResponseSchema.parse(res.json());
+    expect(parsed).toMatchObject({ status: 'approved', offer: { amount: 250_000 } });
+  });
+
+  it('still rejects below the credit minimum', async () => {
+    const res = await post({ ...review, credit_band: '<580' });
+    expect(res.json()).toEqual({ status: 'rejected', reason: 'credit_below_minimum' });
+  });
+
+  it('accepts only approved/rejected as a forced outcome', async () => {
+    expect((await post(review, { 'x-mock-outcome': 'rejected' })).json().status).toBe('rejected');
+    expect((await post(review, { 'x-mock-outcome': 'need-more-documents' })).statusCode).toBe(400);
+  });
+
+  it('requires at least one attachment', async () => {
+    expect((await post({ ...review, attachments: [] })).statusCode).toBe(400);
+  });
+
+  it('supports injected faults', async () => {
+    expect((await post(review, { 'x-mock-fault': 'error' })).statusCode).toBe(503);
   });
 });

@@ -10,6 +10,7 @@ describe('outboundEmail', () => {
 
   it.each([
     [{ to: 'nope' }, /to:/],
+    [{ replyTo: 'not-an-address' }, /reply_to/],
     [{ subject: '   ' }, /subject/],
     [{ subject: 'Hi\r\nBcc: attacker@example.com' }, /single non-empty line/],
     [{ text: '' }, /bodies/],

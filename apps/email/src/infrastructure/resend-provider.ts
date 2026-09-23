@@ -12,7 +12,14 @@ export class ResendProvider implements EmailProvider {
 
   async send(email: OutboundEmail, from: string, options: SendOptions): Promise<DeliveryReceipt> {
     const { data, error } = await this.#resend.emails.send(
-      { from, to: [email.to], subject: email.subject, text: email.text, html: email.html },
+      {
+        from,
+        to: [email.to],
+        subject: email.subject,
+        text: email.text,
+        html: email.html,
+        ...(email.replyTo && { replyTo: email.replyTo }),
+      },
       options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : undefined,
     );
     if (error) throw new ProviderError(error.name, `resend: ${error.message}`);

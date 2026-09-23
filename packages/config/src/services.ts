@@ -50,6 +50,8 @@ export const chaseEnv = base.extend({
   INTERNAL_API_KEY: apiKey,
   EMAIL_SERVICE_URL: url,
   EMAIL_SERVICE_API_KEY: apiKey,
+  /** Base reply address; each Chase replies to `reply+<chase_id>@…` (Cloudflare Email Routing). */
+  CHASE_REPLY_ADDRESS: z.email(),
 });
 export type ChaseConfig = z.output<typeof chaseEnv>;
 

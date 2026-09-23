@@ -61,14 +61,21 @@ describe('POST /v1/send', () => {
   });
 
   it('accepts the email, from the configured sender, with the idempotency key', async () => {
-    const res = await send(payload, { 'idempotency-key': 'chase:abc' });
+    const res = await send(
+      { ...payload, reply_to: 'reply+abc@linkerclaw.ai' },
+      { 'idempotency-key': 'chase:abc' },
+    );
     expect(res.statusCode).toBe(202);
     expect(sendEmailResponseSchema.parse(res.json())).toEqual({
       message_id: 'email_123',
       status: 'accepted',
     });
     expect(provider.sent).toEqual([
-      { email: payload, from: 'HELOC Demo <noreply@linkerclaw.ai>', key: 'chase:abc' },
+      {
+        email: { ...payload, replyTo: 'reply+abc@linkerclaw.ai' },
+        from: 'HELOC Demo <noreply@linkerclaw.ai>',
+        key: 'chase:abc',
+      },
     ]);
   });
 

@@ -20,6 +20,8 @@ export const chaseResponseSchema = z.object({
   subject: z.string(),
   body: z.string(),
   email_message_id: z.string(),
+  /** The Reply Address the borrower answers with documents. */
+  reply_to: z.email(),
 });
 export type ChaseResponse = z.infer<typeof chaseResponseSchema>;
 

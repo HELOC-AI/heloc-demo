@@ -1,10 +1,22 @@
 import type { Composer } from '../application/send-chase.ts';
-import { firstName, type Chase, type ChaseMessage } from '../domain/chase.ts';
+import {
+  firstName,
+  REJECTION_EXPLANATIONS,
+  type Chase,
+  type ChaseMessage,
+  type OutcomeNotice,
+} from '../domain/chase.ts';
 
 export const SUBJECT = 'Additional documents required for your HELOC application';
+export const APPROVED_SUBJECT = 'Your HELOC offer is ready';
+export const REJECTED_SUBJECT = 'An update on your HELOC application';
 
 /** Deterministic template (spec §11.3); swap for an LlmComposer behind the same port. */
 export class TemplateComposer implements Composer {
+  composeOutcome(notice: OutcomeNotice): ChaseMessage {
+    return composeOutcome(notice);
+  }
+
   compose(chase: Chase): ChaseMessage {
     const name = firstName(chase.borrower);
     const reason = (r: string) => (/[.!?]$/.test(r) ? r : `${r}.`);
@@ -17,6 +29,8 @@ export class TemplateComposer implements Composer {
       'Please provide:',
       '',
       ...chase.requests.map((d) => `- ${d.label}\n  Reason: ${reason(d.reason)}`),
+      '',
+      'Simply reply to this email and attach the documents — we will pick them up automatically.',
       '',
       'Thanks.',
     ].join('\n');
@@ -35,6 +49,7 @@ ${chase.requests
   )
   .join('\n')}
     </ul>
+    <p>Simply reply to this email and attach the documents — we will pick them up automatically.</p>
     <p>Thanks.</p>
   </body>
 </html>`;
@@ -42,5 +57,71 @@ ${chase.requests
     return { subject: SUBJECT, text, html };
   }
 }
+
+export function composeOutcome(notice: OutcomeNotice): ChaseMessage {
+  const name = firstName(notice.borrower);
+  const usd = (n: number) =>
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+    }).format(n);
+  const date = (d: Date) =>
+    new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(d);
+
+  if (notice.outcome.status === 'approved') {
+    const o = notice.outcome.offer;
+    const lines = [
+      `Credit line: ${usd(o.amount)}`,
+      `APR: ${o.aprMin}% – ${o.aprMax}%`,
+      `Term: ${o.termMonths / 12} years`,
+      `Estimated monthly payment: ${usd(o.estimatedMonthlyPayment)}`,
+      `Offer valid until: ${date(o.expiresAt)}`,
+    ];
+    const text = [
+      `Hi ${name},`,
+      '',
+      'Thanks for sending your documents. We have reviewed them and your HELOC offer is ready:',
+      '',
+      ...lines.map((l) => `- ${l}`),
+      '',
+      `View your offer: ${notice.resultUrl}`,
+      '',
+      'Thanks.',
+    ].join('\n');
+    const html = wrap(`
+    <p>Hi ${escape(name)},</p>
+    <p>Thanks for sending your documents. We have reviewed them and your HELOC offer is ready:</p>
+    <ul>
+${lines.map((l) => `      <li>${escape(l)}</li>`).join('\n')}
+    </ul>
+    <p><a href="${escape(notice.resultUrl)}">View your offer</a></p>
+    <p>Thanks.</p>`);
+    return { subject: APPROVED_SUBJECT, text, html };
+  }
+
+  const why = REJECTION_EXPLANATIONS[notice.outcome.reason];
+  const text = [
+    `Hi ${name},`,
+    '',
+    `Thanks for sending your documents. After reviewing them, we are unable to offer you a HELOC at this time because ${why}.`,
+    '',
+    `Details: ${notice.resultUrl}`,
+    '',
+    'Thanks.',
+  ].join('\n');
+  const html = wrap(`
+    <p>Hi ${escape(name)},</p>
+    <p>Thanks for sending your documents. After reviewing them, we are unable to offer you a HELOC at this time because ${escape(why)}.</p>
+    <p><a href="${escape(notice.resultUrl)}">See details</a></p>
+    <p>Thanks.</p>`);
+  return { subject: REJECTED_SUBJECT, text, html };
+}
+
+const wrap = (body: string) => `<!doctype html>
+<html>
+  <body style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; line-height: 1.5;">${body}
+  </body>
+</html>`;
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);

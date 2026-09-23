@@ -6,6 +6,8 @@ import {
   type Outcome,
   type OutcomeStatus,
   type RequiredDocument,
+  type ReviewOutcome,
+  type ReviewOutcomeStatus,
   type SoftPull,
 } from './soft-pull.ts';
 
@@ -61,6 +63,26 @@ export function force(pull: SoftPull, status: OutcomeStatus, now: Date): Outcome
     case 'need-more-documents':
       return { status, documents: requiredDocuments(pull) };
   }
+}
+
+/**
+ * Document Review: the submitted documents satisfy the verification request, so only the
+ * hard limits remain — equity and minimum credit. Everything else is approved.
+ */
+export function reviewDocuments(
+  pull: SoftPull,
+  now: Date,
+  forced?: ReviewOutcomeStatus,
+): ReviewOutcome {
+  const natural = evaluate(pull, now);
+  const verdict: ReviewOutcome =
+    natural.status === 'rejected'
+      ? natural
+      : { status: 'approved', offer: calculateOffer(pull, now) };
+  if (!forced || forced === verdict.status) return verdict;
+  return forced === 'approved'
+    ? { status: 'approved', offer: calculateOffer(pull, now) }
+    : { status: 'rejected', reason: 'insufficient_home_equity' };
 }
 
 function requiredDocuments(pull: SoftPull): RequiredDocument[] {
