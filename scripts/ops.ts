@@ -20,11 +20,11 @@ import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import {
+  DIRECT_SOURCE,
   QUERIES,
   createIntakeOpsClient,
   createQueryClient,
   loadOverview,
-  metricsTable,
   searchLogs,
   serviceUrlsFrom,
   toDirectSql,
@@ -195,7 +195,7 @@ async function errors() {
   const query = queryClient();
   const run = (name: keyof typeof QUERIES, bucketSeconds?: number) =>
     query<Record<string, string | number>>(
-      toDirectSql(QUERIES[name].sql(metricsTable), {
+      toDirectSql(QUERIES[name].sql(DIRECT_SOURCE), {
         hours,
         ...(bucketSeconds && { bucketSeconds }),
       }),

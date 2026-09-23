@@ -20,7 +20,10 @@ import {
   QUERIES,
   STATUS_PAGE_URL,
   createQueryClient,
-  metricsTable,
+  DASHBOARD_SOURCE,
+  HTTP_SERVICES,
+  DIRECT_SOURCE,
+  serviceMetric,
   toDirectSql,
   type LogSource,
   type QueryName,
@@ -131,7 +134,7 @@ async function verify() {
   for (const chart of CHARTS.filter((c) => c.query)) {
     const { name, sql } = QUERIES[chart.query!];
     try {
-      const rows = await query(toDirectSql(sql(metricsTable), { hours: 24 }));
+      const rows = await query(toDirectSql(sql(DIRECT_SOURCE), { hours: 24 }));
       console.log(
         `✓ ${name.padEnd(26)} ${rows.length} rows  ${JSON.stringify(rows.slice(0, 2)).slice(0, 150)}`,
       );
@@ -150,7 +153,7 @@ async function ensureMetrics(ids: Record<LogSource, string>) {
   for (const service of LOG_SOURCES) {
     const url = `https://telemetry.betterstack.com/api/v2/sources/${ids[service]}/metrics`;
     const existing = new Set((await listAll(url)).map((m) => m.attributes.name));
-    const missing = METRICS.filter((m) => !existing.has(m.name));
+    const missing = [...METRICS, serviceMetric(service)].filter((m) => !existing.has(m.name));
     for (const metric of missing) await api('POST', url, metric);
     console.log(
       `metrics heloc-${service}: ${missing.length ? `added ${missing.map((m) => m.name).join(', ')}` : 'up to date'}`,
@@ -242,7 +245,7 @@ async function findDashboard(): Promise<Resource> {
 
 /** Per-chart display settings: which columns hold the time, the series and the values. */
 function settingsFor(chart: Chart): Record<string, unknown> {
-  const hasSeries = chart.query && QUERIES[chart.query].sql(metricsTable).includes('AS series');
+  const hasSeries = chart.query && QUERIES[chart.query].sql(DASHBOARD_SOURCE).includes('AS series');
   switch (chart.chart_type) {
     case 'number_chart':
       return {
@@ -273,7 +276,6 @@ const COLUMNS = { time_column: 'time', x_axis_type: 'time', value_columns: ['val
 
 /** The dashboard in Better Stack's export / import format. */
 function dashboardDefinition(ids: Record<LogSource, string>) {
-  const onDashboard = (source: LogSource) => `{{source:${ids[source]}}}`;
   return {
     name: DASHBOARD_NAME,
     refresh_interval: 60,
@@ -281,11 +283,20 @@ function dashboardDefinition(ids: Record<LogSource, string>) {
     date_range_to: RANGE.to,
     preset: {
       preset_type: 'implicit',
-      // Every chart names its sources itself; the source picker just needs a valid value.
       preset_variables: [
         { name: 'start_time', variable_type: 'datetime', values: [RANGE.from] },
         { name: 'end_time', variable_type: 'datetime', values: [RANGE.to] },
-        { name: 'source', variable_type: 'source', values: [ids.intake] },
+        // Service charts read {{__source_union__}}: one UNION ALL over these sources' metrics.
+        {
+          name: 'source',
+          variable_type: 'source',
+          values: HTTP_SERVICES.map((s) => ids[s]),
+          structured_value: {
+            sourceIds: HTTP_SERVICES.map((s) => ids[s]),
+            serviceIds: [],
+            canonicalSourceIds: HTTP_SERVICES.map((s) => `heloc_${s.replace(/-/g, '_')}:metrics`),
+          },
+        },
       ],
     },
     charts: CHARTS.map((chart) => {
@@ -301,7 +312,7 @@ function dashboardDefinition(ids: Record<LogSource, string>) {
         settings: settingsFor(chart),
         chart_queries: [
           query
-            ? { query_type: 'sql_expression', sql_query: query.sql(onDashboard) }
+            ? { query_type: 'sql_expression', sql_query: query.sql(DASHBOARD_SOURCE) }
             : { query_type: 'static_text', static_text: chart.text },
         ],
       };
@@ -322,7 +333,10 @@ async function checkStoredDashboard(): Promise<string[]> {
   const value = (name: string) => preset.preset_variables.find((v) => v.name === name)?.values?.[0];
   if (value('start_time') !== RANGE.from) problems.push(`start_time is ${value('start_time')}`);
   if (value('end_time') !== RANGE.to) problems.push(`end_time is ${value('end_time')}`);
-  if (!value('source')) problems.push('no source selected');
+  const selected = preset.preset_variables.find((v) => v.name === 'source')?.values ?? [];
+  if (selected.length !== HTTP_SERVICES.length) {
+    problems.push(`${selected.length}/${HTTP_SERVICES.length} sources selected`);
+  }
   if (preset.preset_variables.some((v) => v.name === 'time')) {
     problems.push('a "time" variable shadows the built-in {{time}}');
   }
@@ -332,13 +346,24 @@ async function checkStoredDashboard(): Promise<string[]> {
       if (chart.settings?.time_column !== 'time')
         problems.push(`"${chart.name}" has no time column`);
     }
+    // Better Stack allows one source reference per query ("Please select a source" otherwise).
+    for (const { sql_query: sql } of chart.chart_queries ?? []) {
+      const refs = sql?.match(/\{\{(source[^}]*|__source_union__)\}\}/g) ?? [];
+      if (sql && refs.length !== 1)
+        problems.push(`"${chart.name}" has ${refs.length} source references`);
+    }
   }
   return problems;
 }
 
 interface StoredDashboard {
   preset: { preset_variables: { name: string; values?: string[] }[] };
-  charts: { name: string; chart_type: string; settings?: Record<string, unknown> }[];
+  charts: {
+    name: string;
+    chart_type: string;
+    settings?: Record<string, unknown>;
+    chart_queries?: { sql_query?: string | null }[];
+  }[];
 }
 
 if (process.argv.includes('--verify')) await verify();

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ALERT_RULES } from './alert-rules.ts';
-import { PRODUCTION_URLS, metricsTable, serviceUrlsFrom } from './catalog.ts';
+import { LOG_SOURCES, PRODUCTION_URLS, metricsTable, serviceUrlsFrom } from './catalog.ts';
 import { checkHealth } from './health.ts';
-import { QUERIES, toDirectSql } from './metrics.ts';
+import { DASHBOARD_SOURCE, DIRECT_SOURCE, QUERIES, toDirectSql } from './metrics.ts';
 import { loadOverview } from './overview.ts';
 import { createQueryClient } from './query-client.ts';
 import { readStatusPage } from './status-page.ts';
@@ -41,19 +41,20 @@ const statusPage = {
 };
 
 describe('QUERIES', () => {
-  it('become plain ClickHouse over the metrics tables', () => {
+  it('become plain ClickHouse over every metrics table', () => {
     for (const query of Object.values(QUERIES)) {
-      const sql = toDirectSql(query.sql(metricsTable), { hours: 24 });
+      const sql = toDirectSql(query.sql(DIRECT_SOURCE), { hours: 24 });
       expect(sql).not.toContain('{{');
-      expect(sql).toContain('_metrics_5m)');
+      expect(LOG_SOURCES.some((source) => sql.includes(metricsTable(source)))).toBe(true);
       expect(sql).toContain('now() - INTERVAL 24 HOUR');
     }
   });
 
-  it('read each source through the given reference (dashboard: {{source:<id>}})', () => {
-    const sql = QUERIES.errors.sql((source) => `{{source:${source}}}`);
-    expect(sql).toContain('{{source:intake}}');
-    expect(sql).toContain('{{source:email-inbound}}');
+  it('reference exactly one source on a dashboard (Better Stack allows no more)', () => {
+    for (const query of Object.values(QUERIES)) {
+      const refs = query.sql(DASHBOARD_SOURCE).match(/\{\{(source[^}]*|__source_union__)\}\}/g);
+      expect(refs).toHaveLength(1);
+    }
   });
 });
 
