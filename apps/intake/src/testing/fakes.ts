@@ -1,6 +1,8 @@
 /** In-memory adapters for application and interface tests. */
 import {
   ConcurrencyError,
+  DuplicateSubmissionError,
+  OpenLeadExistsError,
   type LeadRepository,
   type SaveOptions,
 } from '../domain/lead-repository.ts';
@@ -29,6 +31,8 @@ export class InMemoryLeads implements LeadRepository, LeadTimeline {
   readonly snapshots = new Map<string, LeadSnapshot>();
   readonly events: RecordedLeadEvent[] = [];
   readonly rawResponses = new Map<string, unknown>();
+  /** Idempotency key → id of the Lead first submitted with it. */
+  readonly idempotencyKeys = new Map<string, string>();
 
   async findById(id: string) {
     const snapshot = this.snapshots.get(id);
@@ -40,9 +44,36 @@ export class InMemoryLeads implements LeadRepository, LeadTimeline {
     return snapshot && Lead.rehydrate(snapshot);
   }
 
+  async findByIdempotencyKey(key: string) {
+    const id = this.idempotencyKeys.get(key);
+    return id === undefined ? undefined : this.findById(id);
+  }
+
+  async recentForEmail(email: string, since: Date) {
+    return [...this.snapshots.values()]
+      .filter((s) => sameEmail(s.borrower.email, email) && s.createdAt >= since)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((s) => Lead.rehydrate(s));
+  }
+
   async save(lead: Lead, options?: SaveOptions) {
     const stored = this.snapshots.get(lead.id);
     if ((stored?.version ?? 0) !== lead.version) throw new ConcurrencyError(lead.id);
+    if (!stored) {
+      const open = [...this.snapshots.values()].some(
+        (s) =>
+          s.id !== lead.id &&
+          sameEmail(s.borrower.email, lead.borrower.email) &&
+          s.status !== 'approved' &&
+          s.status !== 'rejected',
+      );
+      if (open) throw new OpenLeadExistsError();
+      const key = options?.idempotencyKey;
+      if (key !== undefined) {
+        if (this.idempotencyKeys.has(key)) throw new DuplicateSubmissionError();
+        this.idempotencyKeys.set(key, lead.id);
+      }
+    }
     this.snapshots.set(lead.id, { ...lead.snapshot(), version: lead.version + 1 });
     for (const event of lead.pendingEvents()) {
       this.events.push({ ...event, id: `evt-${this.events.length + 1}` });
@@ -162,3 +193,5 @@ export function sequentialIds(prefix = 'id') {
   let n = 0;
   return { newId: () => `${prefix}-${++n}` };
 }
+
+const sameEmail = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();

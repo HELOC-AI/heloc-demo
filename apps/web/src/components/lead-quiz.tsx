@@ -14,6 +14,7 @@ import { useState, type ChangeEvent, type FormEvent, type ReactNode } from 'reac
 import { Field, MoneyInput, SelectInput, Spinner, TextInput } from '@/components/form-controls';
 import { leadApi } from '@/lib/api';
 import { formatUsd } from '@/lib/format';
+import { createSubmissionKeys } from '@/lib/submission-key';
 import {
   CREDIT_BAND_LABELS,
   INCOME_BAND_LABELS,
@@ -66,6 +67,7 @@ export function LeadQuiz() {
   const [mockOutcome, setMockOutcome] = useState<MockOutcome | ''>('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>();
+  const [keyFor] = useState(() => createSubmissionKeys());
 
   const update =
     (field: LeadField) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -113,6 +115,7 @@ export function LeadQuiz() {
     setSubmitting(true);
     const result = await leadApi.submitLead(validation.input, {
       mockOutcome: mockOutcome || undefined,
+      idempotencyKey: keyFor({ input: validation.input, mockOutcome }),
     });
     switch (result.kind) {
       case 'lead':
@@ -131,6 +134,11 @@ export function LeadQuiz() {
         });
         focusFirstInvalid(result.errors);
         return;
+      case 'in_progress':
+        setFormError(
+          'There is already an application in progress for this email address. Please check your inbox for our email about it — it explains the next step.',
+        );
+        break;
       case 'error':
         setFormError(result.message);
         break;

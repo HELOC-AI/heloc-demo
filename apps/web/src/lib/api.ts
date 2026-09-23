@@ -4,6 +4,7 @@ import {
   type LeadInput,
   type LeadResult,
   type MockOutcome,
+  SUBMISSION_ERRORS,
 } from '@heloc/contracts';
 import { API_URL } from './env.ts';
 import { fieldErrorsFromDetails, type FieldErrors } from './lead-form.ts';
@@ -17,11 +18,15 @@ export type ApiResult =
   | { kind: 'invalid'; errors: FieldErrors; messages: string[] }
   | { kind: 'not_found' }
   | { kind: 'conflict' }
+  /** The email already has an application in progress (one per email, ADR-0007). */
+  | { kind: 'in_progress' }
   | { kind: 'error'; message: string };
 
 export interface SubmitOptions {
   /** Forces Figure's Prequal Decision (demo only); omitted → underwriting rules apply. */
   mockOutcome?: MockOutcome | undefined;
+  /** Same key for retries of the same answers, so a retry never creates a second Lead. */
+  idempotencyKey?: string | undefined;
 }
 
 export interface LeadApi {
@@ -59,11 +64,14 @@ export function createLeadApi(
   const notFound = async (): Promise<ApiResult> => ({ kind: 'not_found' });
 
   return {
-    submitLead: (input, { mockOutcome } = {}) =>
+    submitLead: (input, { mockOutcome, idempotencyKey } = {}) =>
       call('/v1/leads', {
         method: 'POST',
         body: input,
-        headers: mockOutcome ? { [HEADERS.mockOutcome]: mockOutcome } : {},
+        headers: {
+          ...(mockOutcome && { [HEADERS.mockOutcome]: mockOutcome }),
+          ...(idempotencyKey && { [HEADERS.idempotencyKey]: idempotencyKey }),
+        },
       }),
     // Lead ids are UUIDs; anything else cannot exist, so there is no need to ask intake.
     getLead: (leadId) =>
@@ -86,7 +94,12 @@ async function interpret(response: Response): Promise<ApiResult> {
     return { kind: 'invalid', errors, messages: rest };
   }
   if (response.status === 404) return { kind: 'not_found' };
-  if (response.status === 409) return { kind: 'conflict' };
+  if (response.status === 409) {
+    const code = (body as { error?: unknown } | undefined)?.error;
+    return code === SUBMISSION_ERRORS.applicationInProgress
+      ? { kind: 'in_progress' }
+      : { kind: 'conflict' };
+  }
   return {
     kind: 'error',
     message: `Something went wrong on our side (HTTP ${response.status}). Please try again.`,

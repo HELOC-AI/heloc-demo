@@ -1,8 +1,10 @@
-import { and, asc, desc, eq, exists, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, lt, ne, notInArray, or, sql } from 'drizzle-orm';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { LeadTimeline, RecordedLeadEvent } from '../../application/ports.ts';
 import {
   ConcurrencyError,
+  DuplicateSubmissionError,
+  OpenLeadExistsError,
   type LeadRepository,
   type SaveOptions,
 } from '../../domain/lead-repository.ts';
@@ -17,6 +19,19 @@ import * as schema from './schema.ts';
 
 /** Works with both postgres-js (production) and PGlite (tests). */
 export type Database = PgDatabase<PgQueryResultHKT, typeof schema>;
+
+const lowerEmail = sql`lower(${schema.leads.email})`;
+/** Statuses of a settled Lead; any other status makes the Lead Open. */
+const SETTLED: ('approved' | 'rejected')[] = ['approved', 'rejected'];
+
+/** Postgres unique_violation on `constraint`; drivers and Drizzle may wrap it in `cause`. */
+function isUniqueViolation(err: unknown, constraint: string): boolean {
+  for (let e: unknown = err; e; e = (e as { cause?: unknown }).cause) {
+    const pg = e as { code?: string; constraint?: string; constraint_name?: string };
+    if (pg.code === '23505' && (pg.constraint ?? pg.constraint_name) === constraint) return true;
+  }
+  return false;
+}
 
 export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
   readonly #db: Database;
@@ -90,6 +105,25 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
     return row && this.findById(row.leadId);
   }
 
+  async findByIdempotencyKey(key: string): Promise<Lead | undefined> {
+    const [row] = await this.#db
+      .select({ id: schema.leads.id })
+      .from(schema.leads)
+      .where(eq(schema.leads.idempotencyKey, key));
+    return row && this.findById(row.id);
+  }
+
+  async recentForEmail(email: string, since: Date): Promise<Lead[]> {
+    const rows = await this.#db
+      .select({ id: schema.leads.id })
+      .from(schema.leads)
+      .where(and(eq(lowerEmail, sql`lower(${email})`), gte(schema.leads.createdAt, since)))
+      .orderBy(desc(schema.leads.createdAt))
+      .limit(20);
+    const found = await Promise.all(rows.map((r) => this.findById(r.id)));
+    return found.filter((l): l is Lead => !!l);
+  }
+
   async save(lead: Lead, options: SaveOptions = {}): Promise<void> {
     const s = lead.snapshot();
     const events = lead.pendingEvents();
@@ -109,11 +143,43 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
 
     await this.#db.transaction(async (tx) => {
       if (s.version === 0) {
-        const inserted = await tx
-          .insert(schema.leads)
-          .values({ ...row, id: s.id, version: 1, createdAt: s.createdAt })
-          .onConflictDoNothing()
-          .returning({ id: schema.leads.id });
+        // One Open Lead per borrower email (ADR-0007). Existing data may already break the
+        // rule, so it is checked here rather than by a unique index; the lock serialises
+        // submissions for the same email until this transaction ends.
+        const email = sql`lower(${s.borrower.email})`;
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${email}, 0))`);
+        const open = await tx
+          .select({ id: schema.leads.id })
+          .from(schema.leads)
+          .where(
+            and(
+              eq(lowerEmail, email),
+              notInArray(schema.leads.status, SETTLED),
+              ne(schema.leads.id, s.id),
+            ),
+          )
+          .limit(1);
+        if (open.length > 0) throw new OpenLeadExistsError();
+
+        let inserted;
+        try {
+          inserted = await tx
+            .insert(schema.leads)
+            .values({
+              ...row,
+              id: s.id,
+              version: 1,
+              idempotencyKey: options.idempotencyKey ?? null,
+              createdAt: s.createdAt,
+            })
+            .onConflictDoNothing({ target: schema.leads.id })
+            .returning({ id: schema.leads.id });
+        } catch (err) {
+          if (isUniqueViolation(err, 'leads_idempotency_key_key')) {
+            throw new DuplicateSubmissionError();
+          }
+          throw err;
+        }
         if (inserted.length === 0) throw new ConcurrencyError(s.id);
       } else {
         const updated = await tx

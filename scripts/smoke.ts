@@ -54,7 +54,8 @@ async function post(path: string, body?: object, headers: Record<string, string>
 const quiz = {
   name: 'Smoke Test',
   // Resend's test inbox: the approved/rejected outcome emails really go out, but a test
-  // address never bounces or hurts the sending domain's reputation.
+  // address never bounces or hurts the sending domain's reputation. Each run and path gets
+  // its own label: identical answers from the same email would return the earlier Lead.
   email: 'delivered+smoke@resend.dev',
   phone: '+14155550000',
   property_state: 'CA',
@@ -64,6 +65,13 @@ const quiz = {
   income_band: '150k-200k',
   purpose: 'other',
 };
+
+const run = Date.now().toString(36);
+const borrower = (path: string) => ({
+  ...quiz,
+  email: `delivered+smoke-${run}-${path}@resend.dev`,
+});
+const idempotencyKey = `smoke-${run}-approved`;
 
 for (const [service, base] of Object.entries(SERVICES)) {
   await check(`health: ${service}`, async () => {
@@ -84,7 +92,10 @@ await check('web: quiz page renders', async () => {
 
 let approved: LeadResult | undefined;
 await check('lead: approved path (forced)', async () => {
-  const { status, lead } = await post('/v1/leads', quiz, { 'x-mock-outcome': 'approved' });
+  const { status, lead } = await post('/v1/leads', borrower('approved'), {
+    'x-mock-outcome': 'approved',
+    'idempotency-key': idempotencyKey,
+  });
   assert(status === 201 && lead.status === 'approved' && lead.offer, `${status} ${lead.status}`);
   assert(lead.notice?.status === 'sent', `outcome email ${lead.notice?.status ?? 'missing'}`);
   approved = lead;
@@ -92,10 +103,24 @@ await check('lead: approved path (forced)', async () => {
 });
 
 await check('lead: rejected path (forced)', async () => {
-  const { status, lead } = await post('/v1/leads', quiz, { 'x-mock-outcome': 'rejected' });
+  const { status, lead } = await post('/v1/leads', borrower('rejected'), {
+    'x-mock-outcome': 'rejected',
+  });
   assert(status === 201 && lead.status === 'rejected' && lead.reason, `${status} ${lead.status}`);
   assert(lead.notice?.status === 'sent', `outcome email ${lead.notice?.status ?? 'missing'}`);
   return `${lead.lead_id} reason ${lead.reason}, outcome email sent`;
+});
+
+await check('lead: a retried submission returns the same Lead', async () => {
+  assert(approved, 'no approved lead to resubmit');
+  const { status, lead } = await post('/v1/leads', borrower('approved'), {
+    'x-mock-outcome': 'approved',
+    'idempotency-key': idempotencyKey,
+  });
+  assert(status === 200 && lead.lead_id === approved.lead_id, `${status} ${lead.lead_id}`);
+  const notices = (lead.events ?? []).filter((e) => e.type === 'notice.sent').length;
+  assert(notices === 1, `${notices} outcome emails`);
+  return 'HTTP 200, same Lead, one outcome email';
 });
 
 await check('lead: invalid borrower data → 400', async () => {

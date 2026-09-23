@@ -15,6 +15,13 @@
       "when": 1790140191283,
       "tag": "0001_powerful_rage",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790166032494,
+      "tag": "0002_one_open_lead_per_email",
+      "breakpoints": true
     }
   ]
 }

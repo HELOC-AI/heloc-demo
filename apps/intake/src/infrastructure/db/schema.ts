@@ -39,22 +39,32 @@ export const noticeStatus = pgEnum('notice_status', ['pending', 'sent', 'failed'
 const money = (name: string) => numeric(name, { precision: 12, scale: 2, mode: 'number' });
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 
-export const leads = pgTable('leads', {
-  id: uuid('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull(),
-  phone: text('phone').notNull(),
-  propertyState: text('property_state').notNull(),
-  estimatedHomeValue: money('estimated_home_value').notNull(),
-  mortgageBalance: money('mortgage_balance').notNull(),
-  creditBand: text('credit_band').notNull(),
-  incomeBand: text('income_band').notNull(),
-  purpose: text('purpose').notNull(),
-  status: leadStatus('status').notNull(),
-  version: integer('version').notNull(),
-  createdAt: createdAt(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const leads = pgTable(
+  'leads',
+  {
+    id: uuid('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    phone: text('phone').notNull(),
+    propertyState: text('property_state').notNull(),
+    estimatedHomeValue: money('estimated_home_value').notNull(),
+    mortgageBalance: money('mortgage_balance').notNull(),
+    creditBand: text('credit_band').notNull(),
+    incomeBand: text('income_band').notNull(),
+    purpose: text('purpose').notNull(),
+    status: leadStatus('status').notNull(),
+    version: integer('version').notNull(),
+    /** Idempotency-Key of the request that submitted the Lead; retries return this Lead. */
+    idempotencyKey: text('idempotency_key'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('leads_idempotency_key_key').on(t.idempotencyKey),
+    // One Open Lead per email and duplicate detection both look Leads up by email (ADR-0007).
+    index('leads_email_created_at_idx').on(sql`lower(${t.email})`, t.createdAt),
+  ],
+).enableRLS();
 
 export const figureDecisions = pgTable(
   'figure_decisions',

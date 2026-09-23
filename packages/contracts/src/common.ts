@@ -42,6 +42,8 @@ export type Purpose = (typeof PURPOSES)[number];
 export const HEADERS = {
   requestId: 'x-request-id',
   idempotencyKey: 'idempotency-key',
+  /** Set on a response that returns an earlier submission's Lead instead of a new one. */
+  idempotentReplayed: 'idempotent-replayed',
   mockOutcome: 'x-mock-outcome',
   mockFault: 'x-mock-fault',
 } as const;

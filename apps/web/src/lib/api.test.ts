@@ -61,6 +61,22 @@ describe('submitLead', () => {
     expect(headersOf(fetchMock).has('x-mock-outcome')).toBe(false);
   });
 
+  it('sends the idempotency key when given', async () => {
+    const fetchMock = stubFetch(201, approved);
+    await createLeadApi(BASE, fetchMock).submitLead(input);
+    expect(headersOf(fetchMock).has('idempotency-key')).toBe(false);
+    await createLeadApi(BASE, fetchMock).submitLead(input, { idempotencyKey: 'key-00000001' });
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('idempotency-key')).toBe(
+      'key-00000001',
+    );
+  });
+
+  it('reports an application already in progress for the email', async () => {
+    const body = { error: 'application_in_progress', message: 'in progress' };
+    const result = await createLeadApi(BASE, stubFetch(409, body)).submitLead(input);
+    expect(result).toEqual({ kind: 'in_progress' });
+  });
+
   it('forwards the demo outcome header', async () => {
     const fetchMock = stubFetch(201, approved);
     await createLeadApi(BASE, fetchMock).submitLead(input, { mockOutcome: 'rejected' });

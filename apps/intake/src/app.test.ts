@@ -2,9 +2,11 @@ import { Writable } from 'node:stream';
 import { PGlite } from '@electric-sql/pglite';
 import { intakeEnv, loadConfig } from '@heloc/config';
 import {
+  HEADERS,
   inboundEmailResponseSchema,
   leadResultSchema,
   opsLeadsResponseSchema,
+  SUBMISSION_ERRORS,
 } from '@heloc/contracts';
 import { createLogger } from '@heloc/logger';
 import { drizzle } from 'drizzle-orm/pglite';
@@ -447,5 +449,61 @@ describe('GET /v1/ops/leads', () => {
       error: 'figure-mock: timed out after 5000ms',
     });
     expect(body.leads[0]).not.toHaveProperty('events');
+  });
+});
+
+describe('POST /v1/leads: one application per email, repeated submissions (ADR-0007)', () => {
+  const post = (payload: object, headers: Record<string, string> = {}) =>
+    app.inject({ method: 'POST', url: '/v1/leads', payload, headers });
+
+  it('answers 409 application_in_progress without revealing the open Lead', async () => {
+    prequal.next = needDocs;
+    const first = await submit();
+    expect(first.statusCode).toBe(201);
+
+    const again = await post({ ...quiz, email: 'JOHN@example.com', estimated_home_value: 900_000 });
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toMatchObject({ error: SUBMISSION_ERRORS.applicationInProgress });
+    expect(again.body).not.toContain(first.json().lead_id);
+  });
+
+  it('returns the earlier Lead (200, flagged) for identical answers after a decision', async () => {
+    const first = await submit();
+    const again = await post(quiz);
+    expect(again.statusCode).toBe(200);
+    expect(again.headers[HEADERS.idempotentReplayed]).toBe('true');
+    expect(again.json().lead_id).toBe(first.json().lead_id);
+    expect(notices.calls).toHaveLength(1);
+  });
+
+  it('honours Idempotency-Key and refuses it with different answers', async () => {
+    const headers = { [HEADERS.idempotencyKey]: '6f1c2c5e-0a4b-4d7e-9c1f-3b2a1d0e9f8a' };
+    const first = await submit(quiz, headers);
+    const retry = await post(quiz, headers);
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json().lead_id).toBe(first.json().lead_id);
+
+    const reused = await post({ ...quiz, purpose: 'debt_consolidation' }, headers);
+    expect(reused.statusCode).toBe(422);
+    expect(reused.json()).toMatchObject({ error: SUBMISSION_ERRORS.idempotencyKeyReused });
+  });
+
+  it('rejects a malformed Idempotency-Key', async () => {
+    const res = await submit(quiz, { [HEADERS.idempotencyKey]: 'short' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('lets the web origin send Idempotency-Key', async () => {
+    await build();
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/leads',
+      headers: {
+        origin: WEB,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,idempotency-key',
+      },
+    });
+    expect(String(res.headers['access-control-allow-headers'])).toContain('idempotency-key');
   });
 });

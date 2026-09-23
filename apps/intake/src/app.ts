@@ -95,8 +95,14 @@ export function buildApp(deps: AppDeps) {
   app.register(cors, {
     origin: config.CORS_ORIGINS,
     methods: ['GET', 'POST'],
-    allowedHeaders: ['content-type', HEADERS.requestId, HEADERS.mockOutcome, HEADERS.mockFault],
-    exposedHeaders: [HEADERS.requestId],
+    allowedHeaders: [
+      'content-type',
+      HEADERS.requestId,
+      HEADERS.idempotencyKey,
+      HEADERS.mockOutcome,
+      HEADERS.mockFault,
+    ],
+    exposedHeaders: [HEADERS.requestId, HEADERS.idempotentReplayed],
   });
 
   app.register(
