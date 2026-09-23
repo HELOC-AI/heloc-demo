@@ -79,8 +79,12 @@ function perSource(
     .join('\nUNION ALL\n');
 }
 
+/**
+ * One row, even when nothing matched (sum of nothing is 0), stamped with the range end so a
+ * dashboard number chart shows it as the latest point.
+ */
 const total = (from: SourceRef, where: string, sources?: readonly LogSource[]) =>
-  `SELECT sum(value) AS value FROM (${perSource(from, 'sum(logs_count) AS value', where, 'tuple()', sources)})`;
+  `SELECT toDateTime({{end_time}}) AS time, sum(value) AS value FROM (${perSource(from, 'sum(logs_count) AS value', where, 'tuple()', sources)})`;
 
 /** The monitoring queries, shared by the Better Stack dashboard, the /ops page and the ops CLI. */
 export const QUERIES = {
@@ -108,13 +112,13 @@ export const QUERIES = {
     name: 'Errors by service',
     description: 'error/fatal log lines per service',
     sql: (from) =>
-      `SELECT time, series, sum(value) AS value FROM (${perSource(from, '{{time}} AS time, $service AS series, sum(logs_count) AS value', IS_ERROR, 'time')}) GROUP BY time, series`,
+      `SELECT time, series, sum(value) AS value FROM (${perSource(from, '{{time}} AS time, $service AS series, sum(logs_count) AS value', IS_ERROR, 'time')}) GROUP BY time, series ORDER BY time`,
   },
   http5xxByService: {
     name: 'HTTP 5xx by service',
     description: 'server errors per service',
     sql: (from) =>
-      `SELECT time, series, sum(value) AS value FROM (${perSource(from, `{{time}} AS time, $service AS series, sumIf(logs_count, ${IS_5XX}) AS value`, "label('status') != ''", 'time', HTTP_SERVICES)}) GROUP BY time, series`,
+      `SELECT time, series, sum(value) AS value FROM (${perSource(from, `{{time}} AS time, $service AS series, sumIf(logs_count, ${IS_5XX}) AS value`, "label('status') != ''", 'time', HTTP_SERVICES)}) GROUP BY time, series ORDER BY time`,
   },
   topErrors: {
     name: 'Top errors',
@@ -126,20 +130,20 @@ export const QUERIES = {
     name: 'p95 response time (ms)',
     description: '95th percentile request latency per service',
     sql: (from) =>
-      perSource(
+      `SELECT time, series, value FROM (${perSource(
         from,
         '{{time}} AS time, $service AS series, round(histogramQuantile(0.95), 1) AS value',
         "name = 'response_time_ms'",
         'time',
         HTTP_SERVICES,
-      ),
+      )}) ORDER BY time`,
   },
   leadPipeline: {
     name: 'Lead pipeline',
     description:
       'Lead events: submissions, Figure outcomes, chases, replies, reviews, notices, failures',
     sql: (from) =>
-      `SELECT {{time}} AS time, label('event') AS series, sum(logs_count) AS value FROM ${from('intake')} WHERE ${range} AND (label('event') LIKE 'lead.%' OR label('event') LIKE 'figure.%' OR label('event') IN ('chase.created', 'email.sent', 'email.failed', 'documents.received', 'documents.rejected', 'notice.sent', 'notice.failed')) GROUP BY time, series`,
+      `SELECT {{time}} AS time, label('event') AS series, sum(logs_count) AS value FROM ${from('intake')} WHERE ${range} AND (label('event') LIKE 'lead.%' OR label('event') LIKE 'figure.%' OR label('event') IN ('chase.created', 'email.sent', 'email.failed', 'documents.received', 'documents.rejected', 'notice.sent', 'notice.failed')) GROUP BY time, series ORDER BY time`,
   },
   borrowerReplies: {
     name: 'Borrower replies',
@@ -151,7 +155,7 @@ export const QUERIES = {
     name: 'Reply pipeline failures',
     description: 'the email Worker could not hand a reply to intake (sender retries)',
     sql: (from) =>
-      `SELECT {{time}} AS time, sum(logs_count) AS value FROM ${from('email-inbound')} WHERE ${range} AND ${replyFailed} GROUP BY time`,
+      `SELECT {{time}} AS time, sum(logs_count) AS value FROM ${from('email-inbound')} WHERE ${range} AND ${replyFailed} GROUP BY time ORDER BY time`,
   },
 } satisfies Record<string, ChartQuery>;
 export type QueryName = keyof typeof QUERIES;
