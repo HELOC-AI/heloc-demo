@@ -288,11 +288,11 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ### Phase 5 — 前端（1.5h）
 
-- [ ] `/`：Quiz 表单（react-hook-form + 复用 `packages/contracts` 的 Zod schema 做客户端校验），州下拉、区间下拉、金额输入；Demo outcome 下拉
-- [ ] `/result/[leadId]`：按状态展示 Offer 卡片 / 拒绝原因 / 所需材料 + “邮件已发送至 …”；可选展示事件时间线
-- [ ] loading / 错误态（intake 502 时展示 lead_id 便于 replay）
+- [x] `/`：Quiz 表单（react-hook-form + 复用 `packages/contracts` 的 Zod schema 做客户端校验），州下拉、区间下拉、金额输入；Demo outcome 下拉
+- [x] `/result/[leadId]`：按状态展示 Offer 卡片 / 拒绝原因 / 所需材料 + “邮件已发送至 …”；可选展示事件时间线
+- [x] loading / 错误态（intake 502 时展示 lead_id 便于 replay）
 
-**验收**：在 Vercel 公网地址完成三种路径的完整演示。
+**验收**（✅ 生产已部署，Better Stack keyword monitor `heloc-web` 在线）：在 Vercel 公网地址完成三种路径的完整演示。
 
 ### Phase 6 — 可观测性收尾（1h）
 
@@ -300,7 +300,9 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 - [x] `@sentry/node`（仅错误捕获，无自动埋点）→ Better Stack Errors；只上报意外的 500，已处理的 4xx / 502 不上报
 - [x] 演示用异常：`X-Mock-Fault: exception` 让 figure-mock 抛出未处理异常
 - [x] 告警：Uptime monitor（email）+ 日志告警 “heloc: errors logged”（4 个服务 error/fatal 日志 > 0 / 5 分钟 → 邮件）；`lead.failed` / `email.failed` 以 error 级别记录
-- [ ] 部署后制造一次异常，确认 Errors 可见且收到告警邮件
+- [x] 线上演练：`X-Mock-Fault: exception` → figure-mock 500 → Lead `failed` → 告警 “heloc: errors logged” 触发事故并邮件通知 → Replay 恢复为 `approved`
+- [x] 修复：与日志 source 关联的 Errors 应用须用 **source 的 host + token** 组成 DSN（应用 token 返回 401）；4 个 DSN 已验证 HTTP 200
+- [x] 5 个 uptime monitor（4 个 `/health` + web keyword）全部 up
 
 **验收**：Better Stack 能看到 Logs、Errors，Alert Destination 已配置并收到过一次测试告警。
 
