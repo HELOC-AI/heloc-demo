@@ -61,25 +61,10 @@ export const chaseEnv = base.extend({
 });
 export type ChaseConfig = z.output<typeof chaseEnv>;
 
-export const emailEnv = base
-  .extend({
-    INTERNAL_API_KEY: apiKey,
-    // `console` logs instead of sending; for local dev without a Resend key.
-    EMAIL_PROVIDER: z.enum(['resend', 'console']).default('resend'),
-    RESEND_API_KEY: z.string().startsWith('re_').optional(),
-    EMAIL_FROM: z.string().min(3),
-  })
-  .refine((env) => env.EMAIL_PROVIDER !== 'resend' || env.RESEND_API_KEY, {
-    path: ['RESEND_API_KEY'],
-    message: 'required when EMAIL_PROVIDER=resend',
-  });
-export type EmailConfig = z.output<typeof emailEnv>;
-
 export const serviceEnvSchemas = {
   intake: intakeEnv,
   'figure-mock': figureMockEnv,
   chase: chaseEnv,
-  email: emailEnv,
 } as const;
 
 /** Version string for /health: short commit SHA on Railway, "dev" locally. */

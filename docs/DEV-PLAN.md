@@ -7,15 +7,15 @@
 
 ## 0. 仓库
 
-| 仓库                                                          | 本地路径             | 内容                                                              |
-| ------------------------------------------------------------- | -------------------- | ----------------------------------------------------------------- |
-| [HELOC-AI/heloc-demo](https://github.com/HELOC-AI/heloc-demo) | `~/project/HELOC-AI` | web / intake / figure-mock / chase / email + 共享 packages + docs |
+| 仓库                                                                            | 本地路径                        | 内容                                                                      |
+| ------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------- |
+| [HELOC-AI/heloc-demo](https://github.com/HELOC-AI/heloc-demo)                   | `~/project/HELOC-AI`            | web / intake / figure-mock / chase / email-inbound + 共享 packages + docs |
+| [HELOC-AI/heloc-email-service](https://github.com/HELOC-AI/heloc-email-service) | `~/project/heloc-email-service` | Email Service：通用 Send API（Resend）                                    |
 
-单一 monorepo，public（Vercel Hobby 不能用 Git 集成部署组织下的私有仓库）。**不提交任何 secret。**
+两个仓库都是 public（Vercel Hobby 不能用 Git 集成部署组织下的私有仓库）。**不提交任何 secret。**
 
-> 与需求文档差异：文档 §12.1 / §17.2 要求 email-service 独立仓库。本项目按决定放进 monorepo 的 `apps/email`，
-> 但保持“独立服务”的边界：独立部署、独立 key、**只依赖 `packages/*` 的通用能力，不 import 其他 app 的代码**，
-> 需要时可以原样拆出为独立仓库。
+> 按需求文档 §12.1 / §17.2，Email Service 是独立仓库（[ADR-0005](./adr/0005-email-service-in-its-own-repository.md)，
+> 取代最初放进 monorepo 的 ADR-0001）。它最初在 `apps/email` 开发，拆分时保留了提交历史。
 
 ---
 
@@ -109,12 +109,12 @@ Railway 全部用 **Infrastructure as Code** 描述：`.railway/railway.ts`（`r
 
 #### 限界上下文
 
-| 上下文            | 服务               | 子域类型         | 领域模型的重心                                    |
-| ----------------- | ------------------ | ---------------- | ------------------------------------------------- |
-| Lead Intake       | `apps/intake`      | 核心域           | `Lead` 聚合：状态机、预审结果、Chase、领域事件    |
-| Prequalification  | `apps/figure-mock` | 外部系统（模拟） | 预审策略（规则 + Offer 计算），无持久化           |
-| Borrower Outreach | `apps/chase`       | 支撑域           | 把 Chase 写成 Chase Message（Composer），无持久化 |
-| Email Delivery    | `apps/email`       | 通用域           | Outbound Email + 可替换的 Email Provider          |
+| 上下文            | 服务                              | 子域类型         | 领域模型的重心                                    |
+| ----------------- | --------------------------------- | ---------------- | ------------------------------------------------- |
+| Lead Intake       | `apps/intake`                     | 核心域           | `Lead` 聚合：状态机、预审结果、Chase、领域事件    |
+| Prequalification  | `apps/figure-mock`                | 外部系统（模拟） | 预审策略（规则 + Offer 计算），无持久化           |
+| Borrower Outreach | `apps/chase`                      | 支撑域           | 把 Chase 写成 Chase Message（Composer），无持久化 |
+| Email Delivery    | `heloc-email-service`（独立仓库） | 通用域           | Outbound Email + 可替换的 Email Provider          |
 
 `packages/contracts` 是 **Published Language**（线上契约 DTO），不是共享领域模型：每个服务在接口层 / 防腐层把 DTO 映射为自己的领域类型。
 

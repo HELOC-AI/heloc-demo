@@ -1,23 +1,25 @@
 # 验收清单（需求文档 §26）
 
 > 逐项对照，附证据。证据均来自 2026-09-23 的生产环境：
-> 最后一次部署时 intake、figure-mock、email 运行 `436419b`，chase 运行 `4d7e40c`，web 为 Vercel production。
+> 最后一次部署时 intake、figure-mock、chase 运行 heloc-demo 的 `cda273e`，email 运行 heloc-email-service 的 `7f0bb02`，web 为 Vercel production。
 
 ## Functional
 
-| 项                                     | 状态 | 证据                                                                                                                      |
-| -------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------- |
-| Borrower 可以填写并提交 Quiz           | ✅   | 浏览器彩排：在生产 web 上填写并提交，`POST /v1/leads` 返回 201，CORS 头为 `https://heloc-demo.vercel.app`                 |
-| Lead 成功写入 Supabase                 | ✅   | `leads` 表里有 Lead `b1868a10-…`（`approved`）；`drizzle.__drizzle_migrations` 共 2 条                                    |
-| Intake 可以调用 Figure Mock            | ✅   | 事件 `figure.requested` → `figure.*`；Better Stack 里同一个 `request_id` 横跨 intake 与 figure-mock                       |
-| Figure Mock 支持 approved              | ✅   | 信用 780+ → approved，额度 $250,000（`pnpm smoke`、线上 curl）                                                            |
-| Figure Mock 支持 rejected              | ✅   | 信用 <580 → `credit_below_minimum`；净值不足 → `insufficient_home_equity`                                                 |
-| Figure Mock 支持 need-more-documents   | ✅   | 信用 620–739 → `income_verification`（LTV > 60% 时再加 `mortgage_statement`）                                             |
-| approved 返回 Offer                    | ✅   | Offer 字段齐全：lender、amount、apr_min/max、term_months、estimated_monthly_payment、expires_at；以 contracts schema 校验 |
-| need-more-documents 自动触发 Chase     | ✅   | 同一请求内依次产生 `chase.created` → `email.sent`，无人工介入                                                             |
-| Chase 调用 Email Service               | ✅   | chase → email 走 `POST /v1/send`，带幂等键 `Idempotency-Key: chase:<id>` 与 Reply-To                                      |
-| Email Service 通过 Resend 真实发送邮件 | ✅   | Resend 中状态 `delivered`：message `01a0ccc2-…`、`01a0ccd8-…`                                                             |
-| 测试邮箱可以收到邮件                   | ✅   | `user@linkerclaw.ai` 经 Cloudflare Email Routing 转发到 Gmail，已确认收到                                                 |
+| 项                                     | 状态 | 证据                                                                                                                                                            |
+| -------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Borrower 可以填写并提交 Quiz           | ✅   | 浏览器彩排：在生产 web 上填写并提交，`POST /v1/leads` 返回 201，CORS 头为 `https://heloc-demo.vercel.app`                                                       |
+| Lead 成功写入 Supabase                 | ✅   | `leads` 表里有 Lead `b1868a10-…`（`approved`）；`drizzle.__drizzle_migrations` 共 2 条                                                                          |
+| Intake 可以调用 Figure Mock            | ✅   | 事件 `figure.requested` → `figure.*`；Better Stack 里同一个 `request_id` 横跨 intake 与 figure-mock                                                             |
+| Figure Mock 支持 approved              | ✅   | 信用 780+ → approved，额度 $250,000（`pnpm smoke`、线上 curl）                                                                                                  |
+| Figure Mock 支持 rejected              | ✅   | 信用 <580 → `credit_below_minimum`；净值不足 → `insufficient_home_equity`                                                                                       |
+| Figure Mock 支持 need-more-documents   | ✅   | 信用 620–739 → `income_verification`（LTV > 60% 时再加 `mortgage_statement`）                                                                                   |
+| approved 返回 Offer                    | ✅   | Offer 字段齐全：lender、amount、apr_min/max、term_months、estimated_monthly_payment、expires_at；以 contracts schema 校验                                       |
+| need-more-documents 自动触发 Chase     | ✅   | 同一请求内依次产生 `chase.created` → `email.sent`，无人工介入                                                                                                   |
+| Email Service 是单独的 Repository      | ✅   | [HELOC-AI/heloc-email-service](https://github.com/HELOC-AI/heloc-email-service)：`src/`、`tests/`、`Dockerfile`、README，自己的 CI（ADR-0005）                  |
+| Email Service 提供通用 Send API        | ✅   | `POST /v1/send`（to / subject / html / text，可选 reply_to 与幂等键）+ `GET /health`；Provider Adapter 可替换（Resend / console）                               |
+| Chase 调用 Email Service               | ✅   | chase → email 走 `POST /v1/send`，带幂等键 `Idempotency-Key: chase:<id>` 与 Reply-To                                                                            |
+| Email Service 通过 Resend 真实发送邮件 | ✅   | 拆分后在生产重跑：Lead `417ffc9f-…` 的补材料邮件 2026-09-23 08:00:53 在 Resend 中为 `delivered`； Resend 中状态 `delivered`：message `01a0ccc2-…`、`01a0ccd8-…` |
+| 测试邮箱可以收到邮件                   | ✅   | `user@linkerclaw.ai` 经 Cloudflare Email Routing 转发到 Gmail，已确认收到                                                                                       |
 
 ## Deployment
 

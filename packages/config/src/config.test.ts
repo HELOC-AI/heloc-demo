@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from './load.ts';
-import { emailEnv, intakeEnv, serviceVersion } from './services.ts';
+import { intakeEnv, serviceVersion } from './services.ts';
 
 const key = 'k'.repeat(64);
 const intakeVars = {
@@ -52,14 +52,6 @@ describe('loadConfig', () => {
     expect(message).toContain('DATABASE_URL: required');
     expect(message).toContain('CHASE_API_KEY: must be at least 32 characters');
     expect(message).not.toContain('short-secret');
-  });
-
-  it('requires RESEND_API_KEY only for the resend provider', () => {
-    const vars = { INTERNAL_API_KEY: key, EMAIL_FROM: 'HELOC <noreply@example.com>' };
-    expect(() => loadConfig(emailEnv, vars)).toThrow(/RESEND_API_KEY: required when/);
-    expect(loadConfig(emailEnv, { ...vars, EMAIL_PROVIDER: 'console' }).EMAIL_PROVIDER).toBe(
-      'console',
-    );
   });
 });
 

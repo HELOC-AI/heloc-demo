@@ -5,7 +5,8 @@ description: Operate the live heloc-demo system — check health, uptime, alerts
 
 # heloc-demo DevOps
 
-Production: web on Vercel, intake / figure-mock / chase / email on Railway, Supabase Postgres,
+Production: web on Vercel, intake / figure-mock / chase on Railway, the Email Service on Railway
+from its own repo (HELOC-AI/heloc-email-service, local `~/project/heloc-email-service`), Supabase Postgres,
 Resend (outbound mail), Cloudflare Email Routing + Worker `heloc-email-inbound` (borrower replies),
 Better Stack (uptime, logs, errors, alerts, dashboards, status page).
 
@@ -65,6 +66,7 @@ shows the Worker's decision (`inbound.*` events on `email-inbound`) and intake's
 **Deploy** (RUNBOOK §1): merging to `main` deploys (Railway rebuilds only changed services, Vercel
 rebuilds web). Watch with `railway deployment list --service <svc> --limit 3`; then `pnpm ops`
 (the `version` column is the deployed commit) and `pnpm smoke`.
+The Email Service deploys when its own repo's `main` changes (Dockerfile build).
 The Worker is manual: `cd apps/email-inbound && npx wrangler deploy` (token: CONFIGURATION §2.8).
 Service logs from Railway itself: `railway logs --service <svc> --lines 200`.
 

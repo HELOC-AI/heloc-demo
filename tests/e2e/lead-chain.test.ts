@@ -1,21 +1,26 @@
 /**
- * The whole chain over real HTTP: intake → figure-mock → chase → email.
+ * The whole chain over real HTTP: intake → figure-mock → chase → Email Service.
  * Each service runs its production composition root on an ephemeral port; intake uses
- * PGlite with the real migrations. Only the email provider (Resend) is replaced, by a
- * recorder that honours idempotency keys the way Resend does.
+ * PGlite with the real migrations. The Email Service lives in its own repository
+ * (heloc-email-service), so it is stood in for by a stub that speaks its Send API
+ * contract — validating every request, honouring idempotency keys as the real one does.
  */
 import { Writable } from 'node:stream';
 import { PGlite } from '@electric-sql/pglite';
-import { chaseEnv, emailEnv, figureMockEnv, intakeEnv, loadConfig } from '@heloc/config';
-import { leadResultSchema, type LeadResult } from '@heloc/contracts';
+import { chaseEnv, figureMockEnv, intakeEnv, loadConfig } from '@heloc/config';
+import {
+  HEADERS,
+  leadResultSchema,
+  sendEmailRequestSchema,
+  type LeadResult,
+  type SendEmailRequest,
+} from '@heloc/contracts';
 import { createLogger } from '@heloc/logger';
+import { bearerAuth, createServer, HttpError, parseInput } from '@heloc/server-kit';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp as buildChase } from '../../apps/chase/src/app.ts';
-import { ProviderError, type EmailProvider } from '../../apps/email/src/application/send-email.ts';
-import { buildApp as buildEmail } from '../../apps/email/src/app.ts';
-import type { OutboundEmail } from '../../apps/email/src/domain/outbound-email.ts';
 import { buildApp as buildFigure } from '../../apps/figure-mock/src/app.ts';
 import { buildApp as buildIntake } from '../../apps/intake/src/app.ts';
 import {
@@ -33,19 +38,33 @@ const keys = {
   inbound: 'i'.repeat(64),
 };
 
-class RecordingProvider implements EmailProvider {
-  readonly name = 'recording';
-  readonly delivered = new Map<string, { email: OutboundEmail; from: string }>();
+/** Stands in for heloc-email-service: POST /v1/send per its contract. */
+class StubEmailService {
+  readonly delivered = new Map<string, { email: SendEmailRequest }>();
+  /** Answers like the real service when its provider (Resend) fails. */
   down = false;
-  async send(email: OutboundEmail, from: string, { idempotencyKey }: { idempotencyKey?: string }) {
-    if (this.down) throw new ProviderError('internal_server_error', 'resend: unavailable');
-    const key = idempotencyKey ?? crypto.randomUUID();
-    if (!this.delivered.has(key)) this.delivered.set(key, { email, from });
-    return { messageId: `email_${[...this.delivered.keys()].indexOf(key) + 1}` };
+
+  build() {
+    const app = createServer({ service: 'email', version: 'e2e', logger: logger() });
+    app.register(
+      async (v1) => {
+        v1.addHook('onRequest', bearerAuth(keys.email));
+        v1.post('/send', async (request, reply) => {
+          const email = parseInput(sendEmailRequestSchema, request.body);
+          if (this.down) throw new HttpError(502, 'provider_error', 'resend: unavailable');
+          const key = String(request.headers[HEADERS.idempotencyKey] ?? crypto.randomUUID());
+          if (!this.delivered.has(key)) this.delivered.set(key, { email });
+          const messageId = `email_${[...this.delivered.keys()].indexOf(key) + 1}`;
+          return reply.code(202).send({ message_id: messageId, status: 'accepted' });
+        });
+      },
+      { prefix: '/v1' },
+    );
+    return app;
   }
 }
 
-const provider = new RecordingProvider();
+const provider = new StubEmailService();
 const servers: { close(): Promise<unknown> }[] = [];
 let intakeUrl = '';
 let background: Promise<unknown>[] = [];
@@ -56,18 +75,7 @@ async function listen(app: ReturnType<typeof buildFigure>) {
 }
 
 beforeAll(async () => {
-  const emailUrl = await listen(
-    buildEmail({
-      config: loadConfig(emailEnv, {
-        INTERNAL_API_KEY: keys.email,
-        EMAIL_PROVIDER: 'console',
-        EMAIL_FROM: 'HELOC Demo <noreply@linkerclaw.ai>',
-      }),
-      logger: logger(),
-      version: 'e2e',
-      provider,
-    }),
-  );
+  const emailUrl = await listen(provider.build());
   const chaseUrl = await listen(
     buildChase({
       config: loadConfig(chaseEnv, {
@@ -169,7 +177,6 @@ describe('lead chain over HTTP', () => {
     expect(provider.delivered.size).toBe(1);
     const [key, sent] = [...provider.delivered][0]!;
     expect(key).toMatch(/^chase:[0-9a-f-]{36}$/);
-    expect(sent.from).toBe('HELOC Demo <noreply@linkerclaw.ai>');
     expect(sent.email).toMatchObject({
       to: 'user@linkerclaw.ai',
       subject: 'Additional documents required for your HELOC application',
@@ -228,7 +235,7 @@ describe('borrower replies with documents (ADR-0004)', () => {
 
     // The chase email carried that Reply-To all the way to the provider.
     const [chaseEmail] = [...provider.delivered.values()];
-    expect(chaseEmail?.email.replyTo).toBe(replyTo);
+    expect(chaseEmail?.email.reply_to).toBe(replyTo);
     expect(chaseEmail?.email.text).toContain('reply to this email');
 
     // What the Cloudflare Email Worker posts when the borrower replies.

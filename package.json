@@ -22,6 +22,7 @@
     "@heloc/contracts": "workspace:*",
     "@heloc/logger": "workspace:*",
     "@heloc/ops": "workspace:*",
+    "@heloc/server-kit": "workspace:*",
     "@types/node": "^24.13.6",
     "drizzle-orm": "^0.45.3",
     "eslint": "^10.11.0",
