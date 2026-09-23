@@ -77,12 +77,12 @@
 
 ### 2.4 email-service（Railway，`apps/email`）
 
-| 变量               | 类型 | 用途                | 来源 / 取值                                                    |
-| ------------------ | ---- | ------------------- | -------------------------------------------------------------- |
-| `RESEND_API_KEY`   | 🔒   | 调 Resend           | Resend → API Keys，权限选 **Sending access**，并限定到发信域名 |
-| `EMAIL_FROM`       | 📄   | 发件人              | `HELOC Demo <noreply@<已验证域名>>`                            |
-| `INTERNAL_API_KEY` | 🔒   | 校验调用方（chase） | `openssl rand -hex 32`                                         |
-| `BETTERSTACK_*`    | 同上 | 日志 / 异常         | 同上                                                           |
+| 变量               | 类型 | 用途                | 来源 / 取值                                                           |
+| ------------------ | ---- | ------------------- | --------------------------------------------------------------------- |
+| `RESEND_API_KEY`   | 🔒   | 调 Resend           | Resend → API Keys，权限选 **Sending access**，并限定到发信域名        |
+| `EMAIL_FROM`       | 📄   | 发件人              | `HELOC Demo <noreply@linkerclaw.ai>`（Cloudflare 上的域名，脚本配置） |
+| `INTERNAL_API_KEY` | 🔒   | 校验调用方（chase） | `openssl rand -hex 32`                                                |
+| `BETTERSTACK_*`    | 同上 | 日志 / 异常         | 同上                                                                  |
 
 ### 2.5 web（Vercel）
 
