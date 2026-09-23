@@ -22,7 +22,16 @@ const OUTER_LAYERS_FROM_APPLICATION = ['**/infrastructure/**', '**/interface/**'
 const OUTER_LAYERS_FROM_DOMAIN = ['**/application/**', ...OUTER_LAYERS_FROM_APPLICATION];
 
 export default defineConfig(
-  { ignores: ['**/node_modules/', '**/dist/', '**/.next/', '**/next-env.d.ts', '**/drizzle/'] },
+  {
+    ignores: [
+      '**/node_modules/',
+      '**/dist/',
+      '**/.next/',
+      '**/next-env.d.ts',
+      '**/drizzle/',
+      '.claude/',
+    ],
+  },
   js.configs.recommended,
   tseslint.configs.recommended,
   {

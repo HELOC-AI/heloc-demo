@@ -7,6 +7,7 @@ import Fastify, {
   type FastifyInstance,
   type FastifyRequest,
 } from 'fastify';
+import { noopErrorReporter, type ErrorReporter } from './error-reporting.ts';
 import { HttpError } from './errors.ts';
 
 export type HealthCheck = () => Promise<unknown>;
@@ -18,12 +19,21 @@ export interface ServerOptions {
   /** Dependency probes reported under `checks`; any failure → 503 "degraded". */
   healthChecks?: Record<string, HealthCheck>;
   healthCheckTimeoutMs?: number;
+  /** Receives unexpected (500) errors; handled 4xx/502s are not reported. */
+  errorReporter?: ErrorReporter;
 }
 
 const REQUEST_ID_PATTERN = /^[\w.:-]{1,128}$/;
 
 export function createServer(options: ServerOptions): FastifyInstance {
-  const { service, version, logger, healthChecks = {}, healthCheckTimeoutMs = 2000 } = options;
+  const {
+    service,
+    version,
+    logger,
+    healthChecks = {},
+    healthCheckTimeoutMs = 2000,
+    errorReporter = noopErrorReporter,
+  } = options;
 
   const app = Fastify({
     // pino's Logger is a FastifyBaseLogger; the cast keeps FastifyInstance's default generics.
@@ -83,6 +93,11 @@ export function createServer(options: ServerOptions): FastifyInstance {
       });
     }
     request.log.error({ err: error, event: 'http.unhandled_error' }, 'unhandled error');
+    errorReporter.capture(error, {
+      request_id: request.id,
+      method: request.method,
+      route: request.routeOptions.url,
+    });
     return reply.code(500).send({
       error: 'internal_error',
       message: 'Internal server error',

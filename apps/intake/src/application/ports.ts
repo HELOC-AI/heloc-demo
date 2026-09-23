@@ -23,7 +23,7 @@ export interface AppLogger {
 /** Demo-only knobs for Prequalification; never interpreted by the domain. */
 export interface PrequalScenario {
   forcedOutcome?: 'approved' | 'rejected' | 'need_more_documents' | undefined;
-  fault?: 'timeout' | 'error' | undefined;
+  fault?: 'timeout' | 'error' | 'exception' | undefined;
 }
 
 export interface RequestContext {

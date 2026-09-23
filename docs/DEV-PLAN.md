@@ -296,9 +296,11 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ### Phase 6 — 可观测性收尾（1h）
 
-- [ ] 4 个服务日志进入 Better Stack，能按 `lead_id` / `request_id` 跨服务检索
-- [ ] `@sentry/node` → Better Stack Errors，制造一次异常验证可见
-- [ ] 告警：Uptime 失败、日志中 `event=email.failed` / `level=error` 触发 Email 告警
+- [x] 4 个服务日志进入 Better Stack，能按 `lead_id` / `request_id` 跨服务检索（已在线上验证：一个 request_id 串起 intake → figure-mock → chase → email）
+- [x] `@sentry/node`（仅错误捕获，无自动埋点）→ Better Stack Errors；只上报意外的 500，已处理的 4xx / 502 不上报
+- [x] 演示用异常：`X-Mock-Fault: exception` 让 figure-mock 抛出未处理异常
+- [x] 告警：Uptime monitor（email）+ 日志告警 “heloc: errors logged”（4 个服务 error/fatal 日志 > 0 / 5 分钟 → 邮件）；`lead.failed` / `email.failed` 以 error 级别记录
+- [ ] 部署后制造一次异常，确认 Errors 可见且收到告警邮件
 
 **验收**：Better Stack 能看到 Logs、Errors，Alert Destination 已配置并收到过一次测试告警。
 

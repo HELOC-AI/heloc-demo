@@ -48,7 +48,9 @@ export function createLeadUseCases({
     const events = lead.pendingEvents();
     await leads.save(lead, options);
     for (const event of events) {
-      log.info({ lead_id: lead.id, event: event.type, ...event.payload }, event.type);
+      // Failures log at error level so Better Stack alerts can fire on them.
+      const level = event.type.endsWith('.failed') ? 'error' : 'info';
+      log[level]({ lead_id: lead.id, event: event.type, ...event.payload }, event.type);
     }
   }
 

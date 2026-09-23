@@ -127,6 +127,16 @@ describe('submitLead', () => {
     expect(eventTypes(lead.id).slice(-2)).toEqual(['email.failed', 'lead.failed']);
   });
 
+  it('logs failures at error level', async () => {
+    setup(new Error('down'));
+    const errors: object[] = [];
+    const log: AppLogger = { ...silentLogger, error: (obj) => errors.push(obj) };
+    const { lead } = await useCases.submitLead(input, {}, log);
+    expect(errors).toEqual([
+      { lead_id: lead.id, event: 'lead.failed', step: 'prequalify', reason: 'down' },
+    ]);
+  });
+
   it('logs every committed event with the lead id', async () => {
     setup(approved);
     const logged: object[] = [];

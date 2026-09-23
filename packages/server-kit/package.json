@@ -12,6 +12,7 @@
   "dependencies": {
     "@heloc/contracts": "workspace:*",
     "@heloc/logger": "workspace:*",
+    "@sentry/node": "^10.75.2",
     "fastify": "^5.12.5",
     "zod": "^4.6.5"
   }

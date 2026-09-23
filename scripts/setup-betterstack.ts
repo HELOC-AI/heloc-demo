@@ -3,11 +3,12 @@
  *   - one Telemetry (logs) source per service
  *   - one Errors application per service (Sentry-SDK compatible), correlated with its logs
  *   - with --monitors: one uptime monitor per service /health (needs <SERVICE>__PUBLIC_URL)
+ *   - with --alerts: a saved query of error/fatal logs across services + an email alert on it
  *
  * Reads the admin token BETTER_STACK_API_KEY from the repo-root .env and writes the
  * per-service ingestion credentials back into it. Prints ids and hosts only, never tokens.
  *
- *   node scripts/setup-betterstack.ts [--monitors]
+ *   node scripts/setup-betterstack.ts [--monitors] [--alerts]
  */
 import { readRootEnv, requireVar, SERVICES, servicePrefix, upsertRootEnv } from './lib/root-env.ts';
 
@@ -126,6 +127,73 @@ for (const service of SERVICES) {
         ).data,
       'pronounceable_name',
     );
+  }
+}
+
+if (process.argv.includes('--alerts')) {
+  console.log('alerts:');
+  const sources = await listAll('https://telemetry.betterstack.com/api/v1/sources');
+  const sourceIds = SERVICES.map((service) => {
+    const source = sources.find((s) => s.attributes.name === `${PROJECT}-${service}`);
+    if (!source)
+      throw new Error(`log source ${PROJECT}-${service} missing; run without --alerts first`);
+    return source.id;
+  });
+
+  // One saved query over every service's logs: error/fatal lines, which include
+  // lead.failed, email.failed, unhandled exceptions and failed startups.
+  const explorationName = `${PROJECT}: error logs (all services)`;
+  const exploration = await findOrCreate(
+    'exploration',
+    'https://telemetry.betterstack.com/api/v2/explorations',
+    explorationName,
+    async () =>
+      (
+        (await api('POST', 'https://telemetry.betterstack.com/api/v2/explorations', {
+          name: explorationName,
+          team_name: 'Your team',
+          chart: {
+            chart_type: 'line_chart',
+            description: 'error/fatal log lines across intake, figure-mock, chase, email',
+          },
+          queries: [
+            {
+              name: 'errors',
+              query_type: 'sql_expression',
+              sql_query:
+                "SELECT {{time}} AS time, count(*) AS value FROM {{source}} WHERE time BETWEEN {{start_time}} AND {{end_time}} AND JSONExtractString(raw, 'level') IN ('error', 'fatal') GROUP BY time",
+              source_variable: 'source',
+            },
+          ],
+          variables: [{ name: 'source', variable_type: 'source', values: sourceIds }],
+        })) as { data: Resource }
+      ).data,
+  );
+
+  const alertName = `${PROJECT}: errors logged`;
+  const alerts = (await listAll('https://telemetry.betterstack.com/api/v2/alerts')).filter(
+    (a) => a.attributes.name === alertName,
+  );
+  if (alerts.length > 0) {
+    console.log(`  alert "${alertName}" exists (id ${alerts[0]!.id})`);
+  } else {
+    const created = (await api(
+      'POST',
+      `https://telemetry.betterstack.com/api/v2/explorations/${exploration.id}/alerts`,
+      {
+        name: alertName,
+        alert_type: 'threshold',
+        operator: 'higher_than',
+        value: 0,
+        check_period: 60,
+        query_period: 300,
+        confirmation_period: 0,
+        recovery_period: 300,
+        on_missing_data: 'treat_as_zero',
+        email: true,
+      },
+    )) as { data: Resource };
+    console.log(`  alert "${alertName}" created (id ${created.data.id}); emails the current team`);
   }
 }
 
