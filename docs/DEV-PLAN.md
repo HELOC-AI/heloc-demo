@@ -7,12 +7,15 @@
 
 ## 0. 仓库
 
-| 仓库 | 本地路径 | 内容 |
-|---|---|---|
-| [HELOC-AI/heloc-demo](https://github.com/HELOC-AI/heloc-demo) | `~/project/HELOC-AI` | web / intake / figure-mock / chase + 共享 packages + docs |
-| [HELOC-AI/heloc-email-service](https://github.com/HELOC-AI/heloc-email-service) | `~/project/heloc-email-service` | 独立的通用邮件发送服务 |
+| 仓库                                                          | 本地路径             | 内容                                                              |
+| ------------------------------------------------------------- | -------------------- | ----------------------------------------------------------------- |
+| [HELOC-AI/heloc-demo](https://github.com/HELOC-AI/heloc-demo) | `~/project/HELOC-AI` | web / intake / figure-mock / chase / email + 共享 packages + docs |
 
-两个仓库都是 public（Vercel Hobby 不能用 Git 集成部署组织下的私有仓库）。**不提交任何 secret。**
+单一 monorepo，public（Vercel Hobby 不能用 Git 集成部署组织下的私有仓库）。**不提交任何 secret。**
+
+> 与需求文档差异：文档 §12.1 / §17.2 要求 email-service 独立仓库。本项目按决定放进 monorepo 的 `apps/email`，
+> 但保持“独立服务”的边界：独立部署、独立 key、**只依赖 `packages/*` 的通用能力，不 import 其他 app 的代码**，
+> 需要时可以原样拆出为独立仓库。
 
 ---
 
@@ -20,21 +23,21 @@
 
 需求文档整体清晰，以下是文档没说清、或按原文实现会出问题的地方，及本计划的处理方式：
 
-| # | 问题 | 处理 |
-|---|---|---|
-| 1 | 文档给 intake 配的是 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`，但 ORM 选的是 Drizzle —— Drizzle 需要的是 Postgres 连接串 | 只用 `DATABASE_URL`，不生成 service role key |
-| 2 | Supabase 直连地址 `db.<ref>.supabase.co` 仅 IPv6，Railway 出网连不上 | 使用 **Session pooler**（`*.pooler.supabase.com:5432`） |
-| 3 | Supabase 默认通过 Data API 暴露 `public` schema，拿到 anon key 即可读 leads（含 PII） | 迁移中对 4 张表 `ENABLE ROW LEVEL SECURITY` 且不建 policy |
-| 4 | 前端不能直连 figure-mock，文档里的 `X-Mock-Outcome` 前端用不上 | intake 接受 `X-Mock-Outcome` 请求头并透传（`ALLOW_MOCK_OVERRIDE=true` 时才生效）；Quiz 页加一个 “Demo outcome” 下拉 |
-| 5 | `credit_band >= 740` 是字符串区间，比较规则未定义 | 固定枚举：`<580`, `580-619`, `620-659`, `660-699`, `700-739`, `740-779`, `780+`，按区间下界比较 |
-| 6 | Rejected 的示例原因是 `insufficient_home_equity`，但规则只看 credit | 规则先算净值：`max_line = 0.85 × home_value − mortgage_balance`，`< 25,000` → rejected(`insufficient_home_equity`)；再按 credit 判断 |
-| 7 | 幂等键 `chase:{chase_id}` —— chase_id 由谁生成？chase-service 无 DB | **intake 先落 `chases` 行拿到 id**，再把 `chase_id` 传给 chase-service；chase → email 带 `Idempotency-Key: chase:{chase_id}`；email-service 透传给 Resend（Resend 原生支持 24h 幂等） |
-| 8 | Replay 语义未定义 | Replay = **从断点续跑**：已有 decision 则复用；need_more_documents 且 chase 未 `sent` 则用同一 chase_id 重发；已 `sent` 则跳过。写 `lead.replayed` 事件 |
-| 9 | Resend 测试发件人 `onboarding@resend.dev` 只能发给账号本人邮箱 | 优先验证一个自有域名；否则测试收件箱 = Resend 账号邮箱（见 CONFIGURATION §5） |
-| 10 | 前端跨域调用 intake | intake 配 `@fastify/cors`，白名单 `CORS_ORIGINS` |
-| 11 | Railway 没有原生 log drain | 各服务在进程内用 `@logtail/pino` 直接投递到 Better Stack |
-| 12 | Better Stack “Errors” | 其 Error Tracking 兼容 Sentry SDK：用 `@sentry/node` + Better Stack DSN（不引入 Sentry 服务本身） |
-| 13 | Common failure modes 需要演示“Figure timeout” | figure-mock 额外支持 `X-Mock-Fault: timeout \| 500`（同样由 intake 透传），用于演示 failed → replay |
+| #   | 问题                                                                                                                         | 处理                                                                                                                                                                                  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 文档给 intake 配的是 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`，但 ORM 选的是 Drizzle —— Drizzle 需要的是 Postgres 连接串 | 只用 `DATABASE_URL`，不生成 service role key                                                                                                                                          |
+| 2   | Supabase 直连地址 `db.<ref>.supabase.co` 仅 IPv6，Railway 出网连不上                                                         | 使用 **Session pooler**（`*.pooler.supabase.com:5432`）                                                                                                                               |
+| 3   | Supabase 默认通过 Data API 暴露 `public` schema，拿到 anon key 即可读 leads（含 PII）                                        | 迁移中对 4 张表 `ENABLE ROW LEVEL SECURITY` 且不建 policy                                                                                                                             |
+| 4   | 前端不能直连 figure-mock，文档里的 `X-Mock-Outcome` 前端用不上                                                               | intake 接受 `X-Mock-Outcome` 请求头并透传（`ALLOW_MOCK_OVERRIDE=true` 时才生效）；Quiz 页加一个 “Demo outcome” 下拉                                                                   |
+| 5   | `credit_band >= 740` 是字符串区间，比较规则未定义                                                                            | 固定枚举：`<580`, `580-619`, `620-659`, `660-699`, `700-739`, `740-779`, `780+`，按区间下界比较                                                                                       |
+| 6   | Rejected 的示例原因是 `insufficient_home_equity`，但规则只看 credit                                                          | 规则先算净值：`max_line = 0.85 × home_value − mortgage_balance`，`< 25,000` → rejected(`insufficient_home_equity`)；再按 credit 判断                                                  |
+| 7   | 幂等键 `chase:{chase_id}` —— chase_id 由谁生成？chase-service 无 DB                                                          | **intake 先落 `chases` 行拿到 id**，再把 `chase_id` 传给 chase-service；chase → email 带 `Idempotency-Key: chase:{chase_id}`；email-service 透传给 Resend（Resend 原生支持 24h 幂等） |
+| 8   | Replay 语义未定义                                                                                                            | Replay = **从断点续跑**：已有 decision 则复用；need_more_documents 且 chase 未 `sent` 则用同一 chase_id 重发；已 `sent` 则跳过。写 `lead.replayed` 事件                               |
+| 9   | Resend 测试发件人 `onboarding@resend.dev` 只能发给账号本人邮箱                                                               | 优先验证一个自有域名；否则测试收件箱 = Resend 账号邮箱（见 CONFIGURATION §5）                                                                                                         |
+| 10  | 前端跨域调用 intake                                                                                                          | intake 配 `@fastify/cors`，白名单 `CORS_ORIGINS`                                                                                                                                      |
+| 11  | Railway 没有原生 log drain                                                                                                   | 各服务在进程内用 `@logtail/pino` 直接投递到 Better Stack                                                                                                                              |
+| 12  | Better Stack “Errors”                                                                                                        | 其 Error Tracking 兼容 Sentry SDK：用 `@sentry/node` + Better Stack DSN（不引入 Sentry 服务本身）                                                                                     |
+| 13  | Common failure modes 需要演示“Figure timeout”                                                                                | figure-mock 额外支持 `X-Mock-Fault: timeout \| 500`（同样由 intake 透传），用于演示 failed → replay                                                                                   |
 
 事件类型在文档基础上补充：`lead.replayed`、`lead.failed`。
 
@@ -68,7 +71,7 @@ POST /v1/leads
 - **request_id**：intake 生成（或沿用入站 `X-Request-Id`），通过 `X-Request-Id` 传给下游；所有日志带 `service / request_id / lead_id / event`。
 - **服务间鉴权**：每一跳独立 `Bearer` key（详见 CONFIGURATION §3）。
 - **/health**：`{status, service, version, timestamp}`，version 取 `RAILWAY_GIT_COMMIT_SHA` 前 7 位或 package version。intake 的 health 额外做 `SELECT 1`（`checks.db`）。
-- **契约**：`packages/contracts` 用 Zod 定义所有跨服务请求/响应；email-service 独立仓库自带一份同构 schema（体量很小，复制优于跨仓库发包）。
+- **契约**：`packages/contracts` 用 Zod 定义所有跨服务请求/响应，所有 app（含 email）共用。
 
 ### 2.3 Monorepo 结构（pnpm workspace，不引入 Turborepo）
 
@@ -78,19 +81,24 @@ heloc-demo/
 │   ├── web/            Next.js (App Router) + Tailwind + shadcn/ui → Vercel
 │   ├── intake/         Fastify + Drizzle → Railway（pre-deploy 跑迁移）
 │   ├── figure-mock/    Fastify → Railway
-│   └── chase/          Fastify → Railway
+│   ├── chase/          Fastify → Railway
+│   └── email/          Fastify + EmailProvider(Resend) → Railway
 ├── packages/
 │   ├── contracts/      Zod schema + TS 类型（Lead、SoftPull、Chase、SendEmail、Health）
 │   ├── config/         loadConfig() + 每个 service 的 env schema
 │   ├── logger/         pino 预设（redact、Better Stack transport）
 │   └── server-kit/     Fastify 启动套件：/health、request-id、bearer auth、错误处理、Sentry
 ├── docs/  DEV-PLAN.md  CONFIGURATION.md  RUNBOOK.md
-├── scripts/ smoke.ts   check-env-examples.ts
+├── scripts/ check-env-examples.ts   smoke.ts(Phase 2)
 ├── .github/workflows/ci.yml
-└── pnpm-workspace.yaml / tsconfig.base.json / eslint.config.js / vitest.workspace.ts
+└── pnpm-workspace.yaml / tsconfig.base.json / eslint.config.js / vitest.config.ts / .node-version
 ```
 
-后端构建：`tsup` 把 app + workspace packages 打成单个 `dist/main.js`；Railway 每个 service 用 `apps/<name>/railway.json`（config-as-code：build/start 命令、`watchPatterns`、`healthcheckPath=/health`，intake 额外 `preDeployCommand` 跑 `drizzle-kit migrate`）。
+后端**无构建步骤**：Node 24 原生 type stripping 直接运行 `node apps/<name>/src/main.ts`（tsconfig 开 `erasableSyntaxOnly`，禁止 enum 等非可擦除语法）。workspace packages 直接导出 `src/*.ts`，Next.js 通过 `transpilePackages` 消费。
+不打包也避免了 pino transport 在 bundle 后解析不到模块的问题。Node 版本由 `.node-version` 统一（CI 与 Railpack 都读它）。
+
+Railway 每个 service 用 `apps/<name>/railway.json`（config-as-code：build/start 命令、`watchPatterns`、`healthcheckPath=/health`，intake 额外 `preDeployCommand` 跑 `drizzle-kit migrate`）。
+Service 的 Root Directory 保持仓库根（需要 workspace），在 Service Settings 里把 Config File Path 指向 `/apps/<name>/railway.json`。
 
 ---
 
@@ -98,12 +106,12 @@ heloc-demo/
 
 4 张表（Drizzle schema 位于 `apps/intake/src/db/schema.ts`）：
 
-| 表 | 关键字段 | 约束 / 索引 |
-|---|---|---|
-| `leads` | 问卷 9 个字段、`status`、`created_at`、`updated_at` | `status` 用 pg enum；金额用 `numeric(12,2)` |
-| `figure_decisions` | `lead_id`、`status`、`raw_response jsonb` | FK → leads；index(lead_id, created_at) |
-| `chases` | `lead_id`、`status(pending/sent/failed)`、`subject`、`body`、`email_message_id`、`sent_at` | FK；**unique(lead_id)**（一个 lead 只追一次，replay 复用） |
-| `lead_events` | `lead_id`、`type`、`payload jsonb` | FK；index(lead_id, created_at) |
+| 表                 | 关键字段                                                                                   | 约束 / 索引                                                |
+| ------------------ | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `leads`            | 问卷 9 个字段、`status`、`created_at`、`updated_at`                                        | `status` 用 pg enum；金额用 `numeric(12,2)`                |
+| `figure_decisions` | `lead_id`、`status`、`raw_response jsonb`                                                  | FK → leads；index(lead_id, created_at)                     |
+| `chases`           | `lead_id`、`status(pending/sent/failed)`、`subject`、`body`、`email_message_id`、`sent_at` | FK；**unique(lead_id)**（一个 lead 只追一次，replay 复用） |
+| `lead_events`      | `lead_id`、`type`、`payload jsonb`                                                         | FK；index(lead_id, created_at)                             |
 
 迁移：`drizzle-kit generate` 生成 SQL 并入库；最后一个迁移追加 `ENABLE ROW LEVEL SECURITY`。
 
@@ -111,12 +119,12 @@ heloc-demo/
 
 ## 4. 测试策略
 
-| 层 | 工具 | 覆盖 |
-|---|---|---|
-| 单元 | Vitest | figure-mock 决策规则（全区间表驱动）、Offer 计算、TemplateComposer 输出（快照）、状态机转换、config 校验 |
-| 服务集成 | Vitest + `fastify.inject` + **PGlite**（内存 Postgres，无需 Docker/secret） | intake 三条路径；figure 超时 → failed；chase 失败 → failed → replay 成功且**只发一次**；replay 对 approved 幂等 |
-| Email 服务 | Vitest + FakeProvider | 鉴权、参数校验、幂等 key 透传、provider 报错映射为 502 |
-| 线上 smoke | `scripts/smoke.ts` | 打 4 个 `/health`；用 `X-Mock-Outcome` 各提交一次 lead，断言状态 |
+| 层         | 工具                                                                        | 覆盖                                                                                                            |
+| ---------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 单元       | Vitest                                                                      | figure-mock 决策规则（全区间表驱动）、Offer 计算、TemplateComposer 输出（快照）、状态机转换、config 校验        |
+| 服务集成   | Vitest + `fastify.inject` + **PGlite**（内存 Postgres，无需 Docker/secret） | intake 三条路径；figure 超时 → failed；chase 失败 → failed → replay 成功且**只发一次**；replay 对 approved 幂等 |
+| Email 服务 | Vitest + FakeProvider                                                       | 鉴权、参数校验、幂等 key 透传、provider 报错映射为 502                                                          |
+| 线上 smoke | `scripts/smoke.ts`                                                          | 打 4 个 `/health`；用 `X-Mock-Outcome` 各提交一次 lead，断言状态                                                |
 
 CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen-lockfile` → lint → typecheck → test → build。无 secret。
 
@@ -140,10 +148,11 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ### Phase 1 — Monorepo 脚手架（1h）
 
-- [ ] pnpm workspace、tsconfig.base、ESLint(flat) + Prettier、Vitest workspace
-- [ ] `packages/config`、`packages/logger`、`packages/server-kit`、`packages/contracts`
-- [ ] GitHub Actions CI
-- [ ] `heloc-email-service` 仓库脚手架（同样的 lint/test/CI 约定，自带 Dockerfile）
+- [x] pnpm workspace、tsconfig.base、ESLint(flat) + Prettier、Vitest
+- [x] `packages/config`、`packages/logger`、`packages/server-kit`、`packages/contracts`
+- [x] 5 个 app 骨架（4 个 Fastify 服务只有 `/health`；web 占位页）+ 每个 app 的 `.env.example` / `railway.json`
+- [x] `pnpm check:env`：`.env.example` 与 env schema 不一致时 CI 失败
+- [x] GitHub Actions CI
 
 **验收**：`pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全绿，CI 在 PR 上跑通。
 
@@ -202,12 +211,12 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ## 6. 风险与预案
 
-| 风险 | 预案 |
-|---|---|
-| Resend 域名 DNS 验证迟迟不过 | 退回 `onboarding@resend.dev` + Resend 账号邮箱作为测试收件箱 |
-| Railway monorepo 构建识别不到 workspace 依赖 | 改用每个 app 的 Dockerfile（根目录作为 build context） |
-| Supabase pooler 连接偶发断开 | postgres-js 设 `max: 5`、`idle_timeout`；/health 暴露 db 检查 |
-| 时间不够 | 砍顺序：结果页事件时间线 → Sentry Errors（保留日志型告警）→ shadcn 美化 |
+| 风险                                         | 预案                                                                    |
+| -------------------------------------------- | ----------------------------------------------------------------------- |
+| Resend 域名 DNS 验证迟迟不过                 | 退回 `onboarding@resend.dev` + Resend 账号邮箱作为测试收件箱            |
+| Railway monorepo 构建识别不到 workspace 依赖 | 改用每个 app 的 Dockerfile（根目录作为 build context）                  |
+| Supabase pooler 连接偶发断开                 | postgres-js 设 `max: 5`、`idle_timeout`；/health 暴露 db 检查           |
+| 时间不够                                     | 砍顺序：结果页事件时间线 → Sentry Errors（保留日志型告警）→ shadcn 美化 |
 
 ---
 

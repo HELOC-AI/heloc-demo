@@ -1,0 +1,18 @@
+{
+  "name": "@heloc/server-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@heloc/contracts": "workspace:*",
+    "@heloc/logger": "workspace:*",
+    "fastify": "^5.12.5",
+    "zod": "^4.6.5"
+  }
+}
