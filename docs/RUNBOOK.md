@@ -212,6 +212,7 @@ ORDER BY updated_at DESC;
   - 回信链路失败数。
 
   全部图表 SQL 可用 `node scripts/setup-dashboards.ts --verify` 验证。
+  **注意：Better Stack 看板只能查询 metrics，不能查原始日志。** 图表用到的字段（`event`、`status`、`reply_outcome`、`error_message`、`response_time_ms`；`level` 是内置的）由脚本在每个 source 上定义为「日志转指标」，写入时提取，不回填历史。要加新图表，先在 `METRICS` 里定义字段；日志告警则用 exploration（直接查原始日志），定义在 `setup-betterstack.ts --alerts`。
 
 - **状态页**：https://heloc-demo-status.betteruptime.com，展示 5 个服务的实时状态与 30 天可用率。
 - **日志跨服务追踪**：所有日志带 `request_id`（经 `X-Request-Id` 在服务间传递）和 `lead_id`。在 Better Stack Live tail 里按 `request_id:<id>` 搜索即可看到一次请求的全链路。
