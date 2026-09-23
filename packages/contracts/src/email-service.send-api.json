@@ -1,0 +1,78 @@
+{
+  "service": "heloc-email-service",
+  "endpoints": {
+    "POST /v1/send": {
+      "headers": {
+        "authorization": "Bearer <INTERNAL_API_KEY>",
+        "idempotency-key": "optional; same key → sent at most once",
+        "x-request-id": "optional; echoed back"
+      },
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 998
+          },
+          "html": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reply_to": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          }
+        },
+        "required": ["to", "subject", "html", "text"],
+        "additionalProperties": false
+      },
+      "responses": {
+        "202": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "accepted"
+            }
+          },
+          "required": ["message_id", "status"],
+          "additionalProperties": false
+        },
+        "4xx/5xx": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "request_id": {
+              "type": "string"
+            },
+            "details": {}
+          },
+          "required": ["error", "message", "request_id"],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

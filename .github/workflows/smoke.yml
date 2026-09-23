@@ -20,6 +20,7 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:contracts
       - run: pnpm smoke
         env:
           INTAKE_URL: ${{ vars.INTAKE_URL }}
