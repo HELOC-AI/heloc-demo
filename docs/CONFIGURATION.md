@@ -7,11 +7,11 @@
 
 ## 1. 三层存储模型
 
-| 层                                    | 存什么                                  | 存在哪里                                                                                    | 谁读                  |
-| ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------- |
-| **① 定义层（进 Git）**                | 变量名、类型、是否 secret、默认值、说明 | `packages/config/src/<service>.ts`（Zod schema）+ 每个 app 的 `.env.example` + 本文件       | 代码、开发者、RUNBOOK |
-| **② 运行时真源（不进 Git）**          | 线上实际值                              | Railway 各 Service 的 Variables；Vercel Project Env                                         | 线上进程              |
-| **③ 人工备份 / 本地开发（不进 Git）** | 同一份值的人工副本                      | 密码管理器（1Password / Bitwarden，一个 provider 一条目）；本地 `apps/*/.env`（gitignored） | 开发者本机            |
+| 层                           | 存什么                                  | 存在哪里                                                                                        | 谁读                    |
+| ---------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------- |
+| **① 定义层（进 Git）**       | 变量名、类型、是否 secret、默认值、说明 | `packages/config/src/<service>.ts`（Zod schema）+ 每个 app 的 `.env.example` + 本文件           | 代码、开发者、RUNBOOK   |
+| **② 运行时真源（不进 Git）** | 线上实际值                              | Railway 各 Service 的 Variables；Vercel Project Env                                             | 线上进程                |
+| **③ 本地主副本（不进 Git）** | 同一份值的主副本                        | **仓库根 `.env`**（gitignored，权限 600）+ 密码管理器备份；`apps/*/.env` 由脚本从根 `.env` 生成 | 开发者本机、`scripts/*` |
 
 规则：
 
@@ -19,6 +19,20 @@
 - **GitHub 不存任何运行时 secret**。PR 流水线（lint / typecheck / test / build）不需要 secret；部署走 Railway / Vercel 的 Git 集成，也不需要 deploy token。
 - GitHub 仅用 **Repository Variables**（非 secret）存线上公开 URL，供部署后 smoke test 使用。
 - `.gitignore` 忽略 `.env`、`.env.*`，但保留 `.env.example`。
+
+### 1.1 根 `.env` 命名约定
+
+| 形式                    | 含义                                               | 例子                                                                      |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| `NAME`                  | 多个服务共用，或只有一个服务使用、名字本身不会冲突 | `RESEND_API_KEY`、`DATABASE_URL`                                          |
+| `<SERVICE>__NAME`       | 只属于某个服务，同步时去掉前缀                     | `INTAKE__BETTERSTACK_SOURCE_TOKEN` → intake 的 `BETTERSTACK_SOURCE_TOKEN` |
+| `<SERVICE>__PUBLIC_URL` | 该服务的公网地址（非 secret），供脚本使用          | `WEB__PUBLIC_URL`                                                         |
+
+**管理员凭据只留在根 `.env`，永不同步到任何服务**：`BETTER_STACK_API_KEY`（能改整个 Better Stack 账号）、`SUPABASE_SECRET_KEY`（本项目不使用）、`SUPABASE_PASSWORD`（只用来拼 `DATABASE_URL`）。
+
+自动写入根 `.env` 的脚本（幂等，只打印 id / host，不打印 token）：
+
+- `node scripts/setup-betterstack.ts [--monitors]`：建 log source、errors app（加 `--monitors` 再建 uptime monitor），写回 `<SERVICE>__BETTERSTACK_*`
 
 ---
 
@@ -38,7 +52,7 @@
 | `CORS_ORIGINS`                                            | 📄    | 允许的前端 Origin（逗号分隔）            | `https://heloc-demo.vercel.app`                                                     |
 | `ALLOW_MOCK_OVERRIDE`                                     | 📄    | 是否透传 `X-Mock-Outcome` 给 figure-mock | Demo 环境 `true`                                                                    |
 | `BETTERSTACK_SOURCE_TOKEN` / `BETTERSTACK_INGESTING_HOST` | 🔒/📄 | 日志投递                                 | Better Stack → Telemetry → Sources（每个 service 一个 source）                      |
-| `BETTERSTACK_ERRORS_DSN`                                  | 🔒    | 异常上报（Sentry SDK 兼容）              | Better Stack → Errors → Application                                                 |
+| `BETTERSTACK_ERRORS_DSN`                                  | 🔒    | 异常上报（Sentry SDK 兼容）              | Better Stack → Errors → Application（每个 service 一个）                            |
 
 > 与原需求文档差异：文档写的是 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`，但我们用 **Drizzle 直连 Postgres**，只需要 `DATABASE_URL`。
 > Service role key 会绕过 RLS、权限远大于需要，**不生成、不存放**。Supabase 的 anon key 同样不使用。
@@ -164,7 +178,7 @@ pnpm --filter @heloc/intake dev                # node --watch --env-file-if-exis
 | **Resend**       | 添加并验证发信域名（DNS: SPF/DKIM）→ 建 Sending-access API key。若暂时没有域名，只能用 `onboarding@resend.dev` 发到 **Resend 账号自己的邮箱**，测试收件箱就用这个邮箱                                                                    |
 | **Railway**      | 1 个 Project、4 个 Service，**Service 名固定为 `intake` / `figure-mock` / `chase` / `email`**（引用变量依赖这些名字），均从 GitHub 部署；变量在各 Service 的 Variables 页填，**不用 Shared Variables**（避免 secret 扩散到所有 service） |
 | **Vercel**       | Import `heloc-demo`，Root Directory = `apps/web`，配置 `NEXT_PUBLIC_API_URL`（Production + Preview）                                                                                                                                     |
-| **Better Stack** | Telemetry：4 个 HTTP source（每 service 一个）；Errors：1 个 application 拿 DSN；Uptime：4 个 `/health` monitor；Alert：Email（+ 可选 Slack）                                                                                            |
+| **Better Stack** | 全部由 `scripts/setup-betterstack.ts` 通过 API 创建：每个 service 一个 Telemetry source + 一个 Errors application（与该 source 关联，日志和异常可互相跳转）；Uptime：4 个 `/health` monitor；Alert：Email（+ 可选 Slack）                |
 | **GitHub**       | 仓库 Settings → Variables 填公网 URL；开启 Secret scanning + Push protection（public 仓库免费）                                                                                                                                          |
 
 ---
