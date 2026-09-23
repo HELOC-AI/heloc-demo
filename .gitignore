@@ -18,3 +18,6 @@ next-env.d.ts
 
 # Agent worktrees (Claude Code)
 .claude/worktrees/
+
+# Playwright MCP screenshots / traces
+.playwright-mcp/
