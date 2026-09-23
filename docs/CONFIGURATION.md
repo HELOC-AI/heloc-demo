@@ -28,11 +28,12 @@
 | `<SERVICE>__NAME`       | 只属于某个服务，同步时去掉前缀                     | `INTAKE__BETTERSTACK_SOURCE_TOKEN` → intake 的 `BETTERSTACK_SOURCE_TOKEN` |
 | `<SERVICE>__PUBLIC_URL` | 该服务的公网地址（非 secret），供脚本使用          | `WEB__PUBLIC_URL`                                                         |
 
-**管理员凭据只留在根 `.env`，永不同步到任何服务**：`BETTER_STACK_API_KEY`（能改整个 Better Stack 账号）、`SUPABASE_SECRET_KEY`（本项目不使用）、`SUPABASE_PASSWORD`（只用来拼 `DATABASE_URL`）。
+**管理员凭据只留在根 `.env`，永不同步到任何服务**：`BETTER_STACK_API_KEY`（能改整个 Better Stack 账号）、`RESEND_ADMIN_API_KEY`（Full access，只用于添加/验证域名，用完可在 Resend 删除）、`SUPABASE_SECRET_KEY`（本项目不使用）、`SUPABASE_PASSWORD`（只用来拼 `DATABASE_URL`）。
 
 自动写入根 `.env` 的脚本（幂等，只打印 id / host，不打印 token）：
 
 - `node scripts/setup-betterstack.ts [--monitors]`：建 log source、errors app（加 `--monitors` 再建 uptime monitor），写回 `<SERVICE>__BETTERSTACK_*`
+- `node scripts/setup-resend-domain.ts [--wait]`：在 Resend 添加 `RESEND_DOMAIN`，把 DKIM / SPF / bounce MX + DMARC 记录写入 Cloudflare（通过已登录的 `cf` CLI，DNS only），触发验证，写回 `EMAIL_FROM`
 
 ---
 

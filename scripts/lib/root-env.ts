@@ -29,7 +29,7 @@ export function upsertRootEnv(values: Record<string, string>, sectionComment?: s
     if (key && pending.has(key)) {
       const value = pending.get(key)!;
       pending.delete(key);
-      return `${key}=${value}`;
+      return `${key}=${formatValue(value)}`;
     }
     return line;
   });
@@ -38,9 +38,19 @@ export function upsertRootEnv(values: Record<string, string>, sectionComment?: s
     while (updated.length > 0 && updated.at(-1) === '') updated.pop();
     updated.push('');
     if (sectionComment) updated.push(`# ${sectionComment}`);
-    for (const [key, value] of pending) updated.push(`${key}=${value}`);
+    for (const [key, value] of pending) updated.push(`${key}=${formatValue(value)}`);
   }
   writeFileSync(ROOT_ENV_PATH, `${updated.join('\n').replace(/\n*$/, '')}\n`, { mode: 0o600 });
+}
+
+/**
+ * Single-quote values a shell `source` would misread (spaces, <, >, $). Single quotes are
+ * literal in both node:util parseEnv and POSIX shells, so both read the same value.
+ */
+function formatValue(value: string): string {
+  if (/^[\w@.:/+=,%-]*$/.test(value)) return value;
+  if (value.includes("'")) throw new Error('.env values must not contain single quotes');
+  return `'${value}'`;
 }
 
 export function requireVar(env: Record<string, string>, key: string): string {
