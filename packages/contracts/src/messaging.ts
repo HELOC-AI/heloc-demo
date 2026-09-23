@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { missingDocumentSchema } from './figure.ts';
+import { missingDocumentSchema } from './lead.ts';
 
 // intake → chase
 

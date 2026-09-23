@@ -42,6 +42,24 @@ export function createServer(options: ServerOptions): FastifyInstance {
     },
   });
 
+  // Clients often send `content-type: application/json` on body-less POSTs (e.g. replay);
+  // treat an empty body as no body instead of rejecting the request.
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const text = String(body);
+    if (text.trim() === '') return done(null, undefined);
+    try {
+      done(null, JSON.parse(text));
+    } catch {
+      done(
+        Object.assign(new Error('Body is not valid JSON'), {
+          statusCode: 400,
+          code: 'invalid_json',
+        }),
+      );
+    }
+  });
+
   app.addHook('onSend', async (request, reply) => {
     reply.header(HEADERS.requestId, request.id);
   });

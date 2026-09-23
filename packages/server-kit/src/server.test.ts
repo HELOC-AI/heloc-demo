@@ -122,6 +122,29 @@ describe('errors and request ids', () => {
     expect(res.headers['x-request-id']).not.toBe('a b<script>');
   });
 
+  it('treats an empty JSON body as no body', async () => {
+    build();
+    app.post('/v1/empty', async (req) => ({ body: req.body ?? null }));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/empty',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ body: null });
+  });
+
+  it('rejects malformed JSON with 400', async () => {
+    const res = await build().inject({
+      method: 'POST',
+      url: '/v1/echo',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+      payload: '{not json',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_json');
+  });
+
   it('returns JSON 404s', async () => {
     const res = await build().inject({ method: 'GET', url: '/nope' });
     expect(res.statusCode).toBe(404);
