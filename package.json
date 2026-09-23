@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit && pnpm -r typecheck",
     "test": "vitest run",
     "check:env": "node scripts/check-env-examples.ts",
+    "check:contracts": "node scripts/check-email-contract.ts",
     "smoke": "node scripts/smoke.ts",
     "ops": "node scripts/ops.ts"
   },
