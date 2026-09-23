@@ -267,24 +267,24 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ### Phase 3 — 领域模型 + 数据层 + Figure Mock + Intake 编排（2.5h）
 
-- [ ] ESLint 分层依赖规则（domain / application 不得依赖外层与框架）
-- [ ] figure-mock：`SoftPullPolicy`、`OfferCalculator`（domain）→ `RunSoftPull`（application）→ 路由（interface）；Forced Outcome / Injected Fault
-- [ ] intake domain：`Lead` 聚合、值对象、`PrequalDecision`、`Chase`、领域事件、`nextStep()`，全覆盖单元测试
-- [ ] intake application：`SubmitLead` / `ReplayLead` / `AdvanceLead` / `GetLead` + 端口；用内存 fake 测试
-- [ ] intake infrastructure：Drizzle schema + 迁移 + RLS、`DrizzleLeadRepository`（聚合 + 事件同事务）、`FigureHttpGateway`（防腐层）；PGlite 测试；Railway pre-deploy 迁移
-- [ ] intake interface：`POST /v1/leads`、`GET /v1/leads/:id`、`POST /v1/leads/:id/replay`、CORS
-- [ ] contracts：Figure 契约中的 `missingDocument` 改名 `requiredDocument`（与 Prequalification 术语一致，线上格式不变）
+- [x] ESLint 分层依赖规则（domain / application 不得依赖外层与框架）
+- [x] figure-mock：`SoftPullPolicy`、`OfferCalculator`（domain）→ `RunSoftPull`（application）→ 路由（interface）；Forced Outcome / Injected Fault
+- [x] intake domain：`Lead` 聚合、值对象、`PrequalDecision`、`Chase`、领域事件、`nextStep()`，全覆盖单元测试
+- [x] intake application：`SubmitLead` / `ReplayLead` / `AdvanceLead` / `GetLead` + 端口；用内存 fake 测试
+- [x] intake infrastructure：Drizzle schema + 迁移 + RLS、`DrizzleLeadRepository`（聚合 + 事件同事务）、`FigureHttpGateway`（防腐层）；PGlite 测试；Railway pre-deploy 迁移
+- [x] intake interface：`POST /v1/leads`、`GET /v1/leads/:id`、`POST /v1/leads/:id/replay`、CORS
+- [x] contracts：Figure 契约中的 `missingDocument` 改名 `requiredDocument`（与 Prequalification 术语一致，线上格式不变）
 
-**验收**：线上 curl 三种 outcome（chase 暂用 fake 或未部署时标记 failed），Supabase 里能看到 leads / figure_decisions / lead_events。
+**验收**（待部署后验证）：线上 curl 三种 outcome（chase 暂用 fake 或未部署时标记 failed），Supabase 里能看到 leads / figure_decisions / lead_events。
 
 ### Phase 4 — Borrower Outreach + Email Delivery（1.5h）
 
-- [ ] email：`OutboundEmail`（domain）→ `SendEmail` + `EmailProvider` 端口（application）→ `ResendProvider` / `ConsoleProvider`（infrastructure）→ `POST /v1/send`；幂等 key 透传给 Resend
-- [ ] chase：`DocumentRequest` / `ChaseMessage`（domain）→ `SendChase` + `Composer` / `EmailGateway` 端口 → `TemplateComposer`（HTML + text）、`EmailHttpGateway` → `POST /v1/chases`
-- [ ] intake：`ChaseHttpGateway` 接入；Replay 端到端
-- [ ] 测试：chase 失败 → failed → replay → 只发一封
+- [x] email：`OutboundEmail`（domain）→ `SendEmail` + `EmailProvider` 端口（application）→ `ResendProvider` / `ConsoleProvider`（infrastructure）→ `POST /v1/send`；幂等 key 透传给 Resend
+- [x] chase：`DocumentRequest` / `ChaseMessage`（domain）→ `SendChase` + `Composer` / `EmailGateway` 端口 → `TemplateComposer`（HTML + text）、`EmailHttpGateway` → `POST /v1/chases`
+- [x] intake：`ChaseHttpGateway` 接入；Replay 端到端
+- [x] 测试：chase 失败 → failed → replay → 只发一封（`tests/e2e/lead-chain.test.ts`：4 个服务真实 HTTP 串联 + PGlite）
 
-**验收**：need-more-documents 线上提交后，`user@linkerclaw.ai`（转发到测试 Gmail）真实收到邮件；`chases.email_message_id` 与 Resend 后台一致。
+**验收**（待部署后验证）：need-more-documents 线上提交后，`user@linkerclaw.ai`（转发到测试 Gmail）真实收到邮件；`chases.email_message_id` 与 Resend 后台一致。
 
 ### Phase 5 — 前端（1.5h）
 
