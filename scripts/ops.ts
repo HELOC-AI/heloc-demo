@@ -73,7 +73,8 @@ function unavailable<T>(part: Section<T>): part is { ok: false; error: string } 
 
 function queryClient() {
   if (!connection) throw new Error('BETTERSTACK_QUERY_* not set in the root .env');
-  return createQueryClient(connection);
+  // Log search scans the archive as well as recent logs; give it longer than the /ops page gets.
+  return createQueryClient(connection, { timeoutMs: 60_000 });
 }
 
 async function confirm(question: string): Promise<boolean> {
