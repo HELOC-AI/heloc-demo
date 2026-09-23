@@ -32,6 +32,7 @@ const token = requireVar(env, 'BETTER_STACK_API_KEY');
 const TEAM = 'Your team';
 const DASHBOARD_NAME = 'HELOC operations';
 const STATUS_SUBDOMAIN = 'heloc-demo-status';
+const RANGE = { from: 'now-24h', to: 'now' };
 
 interface Resource {
   id: string;
@@ -139,7 +140,10 @@ async function verify() {
       console.log(`✗ ${name.padEnd(26)} ${(error as Error).message}`);
     }
   }
-  process.exit(failed ? 1 : 0);
+  const problems = await checkStoredDashboard();
+  for (const problem of problems) console.log(`✗ dashboard: ${problem}`);
+  if (!problems.length) console.log('✓ dashboard config: time range, source, chart columns');
+  process.exit(failed || problems.length ? 1 : 0);
 }
 
 async function ensureMetrics(ids: Record<LogSource, string>) {
@@ -210,47 +214,131 @@ async function converge() {
   const ids = await sourceIds();
   await ensureMetrics(ids);
 
-  // Dashboard: recreate so the definition above is the single source of truth.
-  for (const old of (await listAll('https://telemetry.betterstack.com/api/v2/dashboards')).filter(
+  // Dashboard: import it whole (variables + chart settings) and drop the previous copies, so
+  // the definition above is the single source of truth.
+  const previous = (await listAll('https://telemetry.betterstack.com/api/v2/dashboards')).filter(
     (d) => d.attributes.name === DASHBOARD_NAME,
-  )) {
+  );
+  await api('POST', 'https://telemetry.betterstack.com/api/v2/dashboards/import', {
+    team_name: TEAM,
+    data: dashboardDefinition(ids),
+  });
+  for (const old of previous) {
     await api('DELETE', `https://telemetry.betterstack.com/api/v2/dashboards/${old.id}`);
   }
-  const dashboard = (
-    (await api('POST', 'https://telemetry.betterstack.com/api/v2/dashboards', {
-      name: DASHBOARD_NAME,
-      team_name: TEAM,
-      refresh_interval: 60,
-      date_range_from: 'now-24h',
-      date_range_to: 'now',
-    })) as { data: Resource }
-  ).data;
-  console.log(`dashboard "${DASHBOARD_NAME}" (id ${dashboard.id})`);
+  const dashboard = await findDashboard();
+  console.log(
+    `dashboard "${DASHBOARD_NAME}" imported (id ${dashboard.id}, ${CHARTS.length} charts)`,
+  );
+}
 
+async function findDashboard(): Promise<Resource> {
+  const found = (await listAll('https://telemetry.betterstack.com/api/v2/dashboards')).find(
+    (d) => d.attributes.name === DASHBOARD_NAME,
+  );
+  if (!found) throw new Error(`dashboard "${DASHBOARD_NAME}" not found`);
+  return found;
+}
+
+/** Per-chart display settings: which columns hold the time, the series and the values. */
+function settingsFor(chart: Chart): Record<string, unknown> {
+  const hasSeries = chart.query && QUERIES[chart.query].sql(metricsTable).includes('AS series');
+  switch (chart.chart_type) {
+    case 'number_chart':
+      return {
+        ...COLUMNS,
+        series_column: '',
+        unit: 'shortened',
+        label: 'shown_below',
+        legend: 'hidden',
+        decimal_places: 0,
+      };
+    case 'line_chart':
+    case 'bar_chart':
+      return {
+        ...COLUMNS,
+        series_column: hasSeries ? 'series' : '',
+        unit: 'shortened',
+        label: 'shown_below',
+        legend: hasSeries ? 'shown_below' : 'hidden',
+        stacking: chart.chart_type === 'bar_chart' ? 'stack' : 'none',
+        decimal_places: chart.query === 'p95ResponseTime' ? 1 : 0,
+        treat_missing_values: 'zero',
+      };
+    default:
+      return {};
+  }
+}
+const COLUMNS = { time_column: 'time', x_axis_type: 'time', value_columns: ['value'] };
+
+/** The dashboard in Better Stack's export / import format. */
+function dashboardDefinition(ids: Record<LogSource, string>) {
   const onDashboard = (source: LogSource) => `{{source:${ids[source]}}}`;
-  for (const chart of CHARTS) {
-    const query = chart.query && QUERIES[chart.query];
-    const name = query?.name ?? chart.name!;
-    await api(
-      'POST',
-      `https://telemetry.betterstack.com/api/v2/dashboards/${dashboard.id}/charts`,
-      {
+  return {
+    name: DASHBOARD_NAME,
+    refresh_interval: 60,
+    date_range_from: RANGE.from,
+    date_range_to: RANGE.to,
+    preset: {
+      preset_type: 'implicit',
+      // Every chart names its sources itself; the source picker just needs a valid value.
+      preset_variables: [
+        { name: 'start_time', variable_type: 'datetime', values: [RANGE.from] },
+        { name: 'end_time', variable_type: 'datetime', values: [RANGE.to] },
+        { name: 'source', variable_type: 'source', values: [ids.intake] },
+      ],
+    },
+    charts: CHARTS.map((chart) => {
+      const query = chart.query && QUERIES[chart.query];
+      return {
         chart_type: chart.chart_type,
-        name,
+        name: query?.name ?? chart.name,
         description: query?.description ?? chart.description,
         x: chart.x,
         y: chart.y,
         w: chart.w,
         h: chart.h,
-        queries: [
+        settings: settingsFor(chart),
+        chart_queries: [
           query
             ? { query_type: 'sql_expression', sql_query: query.sql(onDashboard) }
             : { query_type: 'static_text', static_text: chart.text },
         ],
-      },
-    );
-    console.log(`  chart "${name}"`);
+      };
+    }),
+    sections: [],
+  };
+}
+
+/** What the dashboard must look like once stored, or its charts silently show no data. */
+async function checkStoredDashboard(): Promise<string[]> {
+  const dashboard = await findDashboard();
+  const stored = (await api(
+    'GET',
+    `https://telemetry.betterstack.com/api/v2/dashboards/${dashboard.id}/export`,
+  )) as { data?: StoredDashboard } & StoredDashboard;
+  const { preset, charts } = stored.data ?? stored;
+  const problems: string[] = [];
+  const value = (name: string) => preset.preset_variables.find((v) => v.name === name)?.values?.[0];
+  if (value('start_time') !== RANGE.from) problems.push(`start_time is ${value('start_time')}`);
+  if (value('end_time') !== RANGE.to) problems.push(`end_time is ${value('end_time')}`);
+  if (!value('source')) problems.push('no source selected');
+  if (preset.preset_variables.some((v) => v.name === 'time')) {
+    problems.push('a "time" variable shadows the built-in {{time}}');
   }
+  if (charts.length !== CHARTS.length) problems.push(`${charts.length}/${CHARTS.length} charts`);
+  for (const chart of charts) {
+    if (chart.chart_type !== 'static_text_chart' && chart.chart_type !== 'table_chart') {
+      if (chart.settings?.time_column !== 'time')
+        problems.push(`"${chart.name}" has no time column`);
+    }
+  }
+  return problems;
+}
+
+interface StoredDashboard {
+  preset: { preset_variables: { name: string; values?: string[] }[] };
+  charts: { name: string; chart_type: string; settings?: Record<string, unknown> }[];
 }
 
 if (process.argv.includes('--verify')) await verify();
