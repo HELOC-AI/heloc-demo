@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { availableEquity, formatMoneyInput, parseMoney, sanitizeMoneyInput } from './money.ts';
+import {
+  availableEquity,
+  equityHint,
+  formatMoneyInput,
+  parseMoney,
+  sanitizeMoneyInput,
+} from './money.ts';
 
 describe('parseMoney', () => {
   it.each([
@@ -56,5 +62,28 @@ describe('availableEquity', () => {
     expect(availableEquity(800_000, undefined)).toBeUndefined();
     expect(availableEquity(Number.NaN, 0)).toBeUndefined();
     expect(availableEquity(0, 0)).toBeUndefined();
+  });
+});
+
+describe('equityHint', () => {
+  it('warns below the minimum line', () => {
+    expect(equityHint(24_999)).toEqual({
+      enough: false,
+      message: 'Lines start at $25,000, so you may not have enough equity to qualify.',
+    });
+    expect(equityHint(-40_000).enough).toBe(false);
+  });
+
+  it('explains the combined-LTV rule once there is enough equity', () => {
+    expect(equityHint(25_000)).toEqual({
+      enough: true,
+      message: "85% of your home's value, minus your mortgage balance.",
+    });
+  });
+
+  it('mentions the largest line when equity exceeds it', () => {
+    expect(equityHint(400_001).message).toBe(
+      "85% of your home's value, minus your mortgage balance. Lines go up to $400,000.",
+    );
   });
 });
