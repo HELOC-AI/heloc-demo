@@ -44,6 +44,9 @@ export type ReplyResult =
 
 export type LeadUseCases = ReturnType<typeof createLeadUseCases>;
 
+/** A step still running after this long is considered stuck (the pipeline takes seconds). */
+const STUCK_AFTER_MS = 2 * 60 * 1000;
+
 export function createLeadUseCases(deps: LeadUseCaseDeps) {
   const { leads, timeline, prequal, chases, notices, clock, ids } = deps;
 
@@ -222,6 +225,14 @@ export function createLeadUseCases(deps: LeadUseCaseDeps) {
 
     async getLead(leadId: string): Promise<LeadView> {
       return view(await load(leadId));
+    },
+
+    /** Operator view: failed or stuck Leads, each with its timeline (for failed_step / error). */
+    async leadsNeedingAttention(limit = 50): Promise<LeadView[]> {
+      const stuckBefore = new Date(clock.now().getTime() - STUCK_AFTER_MS);
+      const ids = await timeline.needingAttention(stuckBefore, limit);
+      const leadsFound = await Promise.all(ids.map((id) => leads.findById(id)));
+      return Promise.all(leadsFound.filter((l): l is Lead => !!l).map(view));
     },
   };
 }

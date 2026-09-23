@@ -21,3 +21,4 @@ next-env.d.ts
 
 # Playwright MCP screenshots / traces
 .playwright-mcp/
+.claude/scheduled_tasks.lock

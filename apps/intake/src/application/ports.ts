@@ -98,4 +98,9 @@ export interface RecordedLeadEvent extends LeadEvent {
 
 export interface LeadTimeline {
   eventsFor(leadId: string): Promise<RecordedLeadEvent[]>;
+  /**
+   * Leads an operator should look at: `failed`, or stuck mid-pipeline (not updated since
+   * `stuckBefore` while a step is still running). Newest first.
+   */
+  needingAttention(stuckBefore: Date, limit: number): Promise<string[]>;
 }

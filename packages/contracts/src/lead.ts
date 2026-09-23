@@ -132,3 +132,9 @@ export const leadResultSchema = z.object({
     .optional(),
 });
 export type LeadResult = z.infer<typeof leadResultSchema>;
+
+/** GET /v1/ops/leads — Leads an operator should look at (failed or stuck), newest first. */
+export const opsLeadsResponseSchema = z.object({
+  leads: z.array(leadResultSchema.omit({ events: true }).extend({ updated_at: z.iso.datetime() })),
+});
+export type OpsLeadsResponse = z.infer<typeof opsLeadsResponseSchema>;

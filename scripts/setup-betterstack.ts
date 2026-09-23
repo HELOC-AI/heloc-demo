@@ -11,6 +11,7 @@
  *
  *   node scripts/setup-betterstack.ts [--monitors] [--alerts]
  */
+import { ALERT_RULES } from '@heloc/ops';
 import { readRootEnv, requireVar, SERVICES, servicePrefix, upsertRootEnv } from './lib/root-env.ts';
 
 const PROJECT = 'heloc';
@@ -210,29 +211,9 @@ if (process.argv.includes('--alerts')) {
 
   // Log alerts: each is a saved query (exploration) over the *logs* of every service plus
   // a threshold alert on it. Dashboards only see metrics; explorations see raw logs.
-  const LOG_ALERTS = [
-    {
-      alert: `${PROJECT}: errors logged`,
-      exploration: `${PROJECT}: error logs (all services)`,
-      description: 'error/fatal log lines: lead.failed, email.failed, exceptions, failed startups',
-      where: "JSONExtractString(raw, 'level') IN ('error', 'fatal')",
-    },
-    {
-      alert: `${PROJECT}: HTTP 5xx responses`,
-      exploration: `${PROJECT}: HTTP 5xx (all services)`,
-      description: 'responses with status >= 500',
-      where: "JSONExtractInt(raw, 'res', 'statusCode') >= 500",
-    },
-    {
-      alert: `${PROJECT}: borrower reply pipeline failing`,
-      exploration: `${PROJECT}: reply pipeline failures`,
-      description: 'the email Worker could not hand a borrower reply to intake',
-      where:
-        "JSONExtractString(raw, 'event') IN ('inbound.forward_failed', 'inbound.rejected_by_intake', 'inbound.invalid')",
-    },
-  ];
   const existingAlerts = await listAll('https://telemetry.betterstack.com/api/v2/alerts');
-  for (const spec of LOG_ALERTS) {
+  // The rules are shared with the /ops page and scripts/ops.ts (@heloc/ops).
+  for (const spec of ALERT_RULES) {
     const exploration = await findOrCreate(
       'exploration',
       'https://telemetry.betterstack.com/api/v2/explorations',
@@ -247,7 +228,7 @@ if (process.argv.includes('--alerts')) {
               {
                 name: 'matches',
                 query_type: 'sql_expression',
-                sql_query: `SELECT {{time}} AS time, count(*) AS value FROM {{source}} WHERE time BETWEEN {{start_time}} AND {{end_time}} AND ${spec.where} GROUP BY time`,
+                sql_query: `SELECT {{time}} AS time, count(*) AS value FROM {{source}} WHERE time BETWEEN {{start_time}} AND {{end_time}} AND ${spec.rawWhere} GROUP BY time`,
                 source_variable: 'source',
               },
             ],

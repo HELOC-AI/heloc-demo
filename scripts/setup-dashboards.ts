@@ -2,6 +2,7 @@
  * Builds the Better Stack monitoring views for heloc-demo (idempotent):
  *   - Status page https://heloc-demo-status.betteruptime.com: health of every service
  *   - Log → metric extractions on every service's source (dashboards only read metrics)
+ * Chart SQL, metric extractions and alert rules live in @heloc/ops (shared with /ops and the CLI).
  *   - Dashboard "HELOC operations": error statistics, HTTP health, latency, Lead pipeline
  *     and borrower-reply outcomes across all five services
  * Log alerts live in setup-betterstack.ts --alerts (explorations read raw logs).
@@ -11,232 +12,61 @@
  *
  * Needs BETTER_STACK_API_KEY; --verify also needs the BETTERSTACK_QUERY_* connection.
  */
+import {
+  ALERT_RULES,
+  LOG_SOURCES,
+  METRICS,
+  PRODUCTION_URLS,
+  QUERIES,
+  STATUS_PAGE_URL,
+  createQueryClient,
+  metricsTable,
+  toDirectSql,
+  type LogSource,
+  type QueryName,
+} from '@heloc/ops';
 import { readRootEnv, requireVar } from './lib/root-env.ts';
 
 const env = readRootEnv();
 const token = requireVar(env, 'BETTER_STACK_API_KEY');
 const TEAM = 'Your team';
-const TEAM_ID = 't602815';
 const DASHBOARD_NAME = 'HELOC operations';
 const STATUS_SUBDOMAIN = 'heloc-demo-status';
-/** Better Stack serves status pages on its betteruptime.com domain. */
-const STATUS_URL = `https://${STATUS_SUBDOMAIN}.betteruptime.com`;
-const SERVICES = ['intake', 'figure-mock', 'chase', 'email', 'email-inbound'] as const;
-type Service = (typeof SERVICES)[number];
 
 interface Resource {
   id: string;
   attributes: Record<string, unknown>;
 }
 
-/**
- * Fields promoted from logs to metrics at ingest time (labels = no aggregation). Dashboards
- * can only query these; they fill in from the moment they are defined (no backfill).
- * `level` is built in.
- */
-const METRICS = [
-  {
-    name: 'event',
-    type: 'string_low_cardinality',
-    aggregations: [],
-    sql_expression: "JSONExtract(raw, 'event', 'Nullable(String)')",
-  },
-  {
-    name: 'status',
-    type: 'string_low_cardinality',
-    aggregations: [],
-    sql_expression: "toString(JSONExtract(raw, 'res', 'statusCode', 'Nullable(UInt16)'))",
-  },
-  {
-    name: 'reply_outcome',
-    type: 'string_low_cardinality',
-    aggregations: [],
-    sql_expression:
-      "if(JSONExtractString(raw, 'event') = 'inbound.forwarded', if(JSONExtractBool(raw, 'accepted'), 'accepted', JSONExtractString(raw, 'reason')), NULL)",
-  },
-  {
-    name: 'error_message',
-    type: 'string_low_cardinality',
-    aggregations: [],
-    sql_expression:
-      "if(JSONExtractString(raw, 'level') IN ('error', 'fatal'), substring(JSONExtractString(raw, 'message'), 1, 120), NULL)",
-  },
-  {
-    name: 'response_time_ms',
-    type: 'float64_delta',
-    aggregations: ['avg', 'max', 'histogram'],
-    sql_expression: "JSONExtract(raw, 'responseTime', 'Nullable(Float64)')",
-  },
-] as const;
-
 interface Chart {
-  name: string;
-  description: string;
+  /** Its SQL (name and description too) comes from the shared @heloc/ops QUERIES. */
+  query?: QueryName;
+  name?: string;
+  description?: string;
   chart_type: 'line_chart' | 'bar_chart' | 'number_chart' | 'table_chart' | 'static_text_chart';
   x: number;
   y: number;
   w: number;
   h: number;
-  /** Builds the SQL; `ids` maps service → Better Stack source id. */
-  sql?: (ids: Record<Service, string>) => string;
   text?: string;
 }
 
-const range = 'dt BETWEEN {{start_time}} AND {{end_time}}';
-const isError = "label('level') IN ('error', 'fatal')";
-
-/** One branch per service over its own source ({{source:<id>}}), tagged with the service name. */
-function perService(
-  ids: Record<Service, string>,
-  select: string,
-  where: string,
-  groupBy: string,
-  services: readonly Service[] = SERVICES,
-) {
-  return services
-    .map(
-      (s) =>
-        `SELECT ${select.replaceAll('$service', `'${s}'`)} FROM {{source:${ids[s]}}} WHERE ${range} AND ${where} GROUP BY ${groupBy}`,
-    )
-    .join('\nUNION ALL\n');
-}
-
-const total = (ids: Record<Service, string>, where: string, services?: readonly Service[]) =>
-  `SELECT sum(value) AS value FROM (${perService(ids, 'sum(logs_count) AS value', where, 'tuple()', services)})`;
-
 const CHARTS: Chart[] = [
   // Row 1 — headline numbers for the selected range
-  {
-    name: 'Errors',
-    description: 'error/fatal log lines, all services',
-    chart_type: 'number_chart',
-    x: 0,
-    y: 0,
-    w: 3,
-    h: 3,
-    sql: (ids) => total(ids, isError),
-  },
-  {
-    name: 'HTTP 5xx responses',
-    description: 'responses with status >= 500',
-    chart_type: 'number_chart',
-    x: 3,
-    y: 0,
-    w: 3,
-    h: 3,
-    sql: (ids) => total(ids, "toUInt16OrZero(label('status')) >= 500"),
-  },
-  {
-    name: 'Leads submitted',
-    description: 'lead.created',
-    chart_type: 'number_chart',
-    x: 6,
-    y: 0,
-    w: 3,
-    h: 3,
-    sql: (ids) => total(ids, "label('event') = 'lead.created'", ['intake']),
-  },
-  {
-    name: 'Leads failed',
-    description: 'lead.failed — recover with Replay',
-    chart_type: 'number_chart',
-    x: 9,
-    y: 0,
-    w: 3,
-    h: 3,
-    sql: (ids) => total(ids, "label('event') = 'lead.failed'", ['intake']),
-  },
-
+  { query: 'errors', chart_type: 'number_chart', x: 0, y: 0, w: 3, h: 3 },
+  { query: 'http5xx', chart_type: 'number_chart', x: 3, y: 0, w: 3, h: 3 },
+  { query: 'leadsSubmitted', chart_type: 'number_chart', x: 6, y: 0, w: 3, h: 3 },
+  { query: 'leadsFailed', chart_type: 'number_chart', x: 9, y: 0, w: 3, h: 3 },
   // Row 2 — error statistics over time
-  {
-    name: 'Errors by service',
-    description: 'error/fatal log lines per service',
-    chart_type: 'bar_chart',
-    x: 0,
-    y: 3,
-    w: 6,
-    h: 4,
-    sql: (ids) =>
-      `SELECT time, series, sum(value) AS value FROM (${perService(ids, '{{time}} AS time, $service AS series, sum(logs_count) AS value', isError, 'time')}) GROUP BY time, series`,
-  },
-  {
-    name: 'HTTP 5xx by service',
-    description: 'server errors per service',
-    chart_type: 'line_chart',
-    x: 6,
-    y: 3,
-    w: 6,
-    h: 4,
-    sql: (ids) =>
-      `SELECT time, series, sum(value) AS value FROM (${perService(ids, "{{time}} AS time, $service AS series, sumIf(logs_count, toUInt16OrZero(label('status')) >= 500) AS value", "label('status') != ''", 'time', ['intake', 'figure-mock', 'chase', 'email'])}) GROUP BY time, series`,
-  },
-
+  { query: 'errorsByService', chart_type: 'bar_chart', x: 0, y: 3, w: 6, h: 4 },
+  { query: 'http5xxByService', chart_type: 'line_chart', x: 6, y: 3, w: 6, h: 4 },
   // Row 3 — what is failing, and how fast things are
-  {
-    name: 'Top errors',
-    description: 'most frequent error messages in the range',
-    chart_type: 'table_chart',
-    x: 0,
-    y: 7,
-    w: 8,
-    h: 5,
-    sql: (ids) =>
-      `SELECT service, event, message, sum(n) AS occurrences, max(last) AS last_seen FROM (${perService(ids, "$service AS service, label('event') AS event, label('error_message') AS message, sum(logs_count) AS n, max(dt) AS last", `${isError} AND label('error_message') != ''`, 'event, message')}) GROUP BY service, event, message ORDER BY occurrences DESC LIMIT 20`,
-  },
-  {
-    name: 'p95 response time (ms)',
-    description: '95th percentile request latency per service',
-    chart_type: 'line_chart',
-    x: 8,
-    y: 7,
-    w: 4,
-    h: 5,
-    sql: (ids) =>
-      perService(
-        ids,
-        '{{time}} AS time, $service AS series, round(histogramQuantile(0.95), 1) AS value',
-        "name = 'response_time_ms'",
-        'time',
-        ['intake', 'figure-mock', 'chase', 'email'],
-      ),
-  },
-
+  { query: 'topErrors', chart_type: 'table_chart', x: 0, y: 7, w: 8, h: 5 },
+  { query: 'p95ResponseTime', chart_type: 'line_chart', x: 8, y: 7, w: 4, h: 5 },
   // Row 4 — business flow
-  {
-    name: 'Lead pipeline',
-    description:
-      'Lead events: submissions, Figure outcomes, chases, replies, reviews, notices, failures',
-    chart_type: 'bar_chart',
-    x: 0,
-    y: 12,
-    w: 6,
-    h: 4,
-    sql: (ids) =>
-      `SELECT {{time}} AS time, label('event') AS series, sum(logs_count) AS value FROM {{source:${ids.intake}}} WHERE ${range} AND (label('event') LIKE 'lead.%' OR label('event') LIKE 'figure.%' OR label('event') IN ('chase.created', 'email.sent', 'email.failed', 'documents.received', 'documents.rejected', 'notice.sent', 'notice.failed')) GROUP BY time, series`,
-  },
-  {
-    name: 'Borrower replies',
-    description: 'emails received at reply+<chase>@ and what intake decided',
-    chart_type: 'table_chart',
-    x: 6,
-    y: 12,
-    w: 3,
-    h: 4,
-    sql: (ids) =>
-      `SELECT label('reply_outcome') AS outcome, sum(logs_count) AS replies FROM {{source:${ids['email-inbound']}}} WHERE ${range} AND label('reply_outcome') != '' GROUP BY outcome ORDER BY replies DESC`,
-  },
-  {
-    name: 'Reply pipeline failures',
-    description: 'the email Worker could not hand a reply to intake (sender retries)',
-    chart_type: 'line_chart',
-    x: 9,
-    y: 12,
-    w: 3,
-    h: 4,
-    sql: (ids) =>
-      `SELECT {{time}} AS time, sum(logs_count) AS value FROM {{source:${ids['email-inbound']}}} WHERE ${range} AND label('event') IN ('inbound.forward_failed', 'inbound.rejected_by_intake', 'inbound.invalid') GROUP BY time`,
-  },
-
+  { query: 'leadPipeline', chart_type: 'bar_chart', x: 0, y: 12, w: 6, h: 4 },
+  { query: 'borrowerReplies', chart_type: 'table_chart', x: 6, y: 12, w: 3, h: 4 },
+  { query: 'replyFailures', chart_type: 'line_chart', x: 9, y: 12, w: 3, h: 4 },
   // Row 5 — where to look next
   {
     name: 'Runbook links',
@@ -247,8 +77,8 @@ const CHARTS: Chart[] = [
     w: 12,
     h: 2,
     text: [
-      `**Service health:** [status page](${STATUS_URL}) · **Incidents / alert history:** Uptime → Incidents · **Exceptions:** Errors → heloc-* applications · **Ops page:** https://heloc-demo.vercel.app/ops`,
-      '**Alerts** (email to on-call): uptime monitors · `heloc: errors logged` · `heloc: HTTP 5xx responses` · `heloc: borrower reply pipeline failing` — recovery steps in `docs/RUNBOOK.md`. Charts read metrics extracted from logs at ingest time.',
+      `**Service health:** [status page](${STATUS_PAGE_URL}) · **Ops page:** ${PRODUCTION_URLS.web}/ops · **Incidents / alert history:** Uptime → Incidents · **Exceptions:** Errors → heloc-* applications`,
+      `**Alerts** (email to on-call): uptime monitors · ${ALERT_RULES.map((r) => `\`${r.alert}\``).join(' · ')} — recovery steps in \`docs/RUNBOOK.md\`. Charts read metrics extracted from logs at ingest time.`,
     ].join('\n\n'),
   },
 ];
@@ -278,52 +108,42 @@ async function listAll(url: string): Promise<Resource[]> {
   return items;
 }
 
-async function sourceIds(): Promise<Record<Service, string>> {
+async function sourceIds(): Promise<Record<LogSource, string>> {
   const sources = await listAll('https://telemetry.betterstack.com/api/v1/sources');
   return Object.fromEntries(
-    SERVICES.map((s) => {
+    LOG_SOURCES.map((s) => {
       const source = sources.find((x) => x.attributes.name === `heloc-${s}`);
       if (!source) throw new Error(`log source heloc-${s} missing`);
       return [s, source.id];
     }),
-  ) as Record<Service, string>;
+  ) as Record<LogSource, string>;
 }
 
-/** Runs each chart exactly as the dashboard would, against the metrics tables. */
+/** Runs each chart's query as the dashboard would, against the metrics tables. */
 async function verify() {
-  const host = requireVar(env, 'BETTERSTACK_QUERY_HOST');
-  const auth = Buffer.from(
-    `${requireVar(env, 'BETTERSTACK_QUERY_USERNAME')}:${requireVar(env, 'BETTERSTACK_QUERY_PASSWORD')}`,
-  ).toString('base64');
-  const ids = await sourceIds();
-  const tableFor = Object.fromEntries(
-    SERVICES.map((s) => [ids[s], `remote(${TEAM_ID}_heloc_${s.replace(/-/g, '_')}_metrics_5m)`]),
-  );
+  const query = createQueryClient({
+    host: requireVar(env, 'BETTERSTACK_QUERY_HOST'),
+    username: requireVar(env, 'BETTERSTACK_QUERY_USERNAME'),
+    password: requireVar(env, 'BETTERSTACK_QUERY_PASSWORD'),
+  });
   let failed = 0;
-  for (const chart of CHARTS.filter((c) => c.sql)) {
-    const sql = chart.sql!(ids)
-      .replace(/\{\{source:(\d+)\}\}/g, (_, id: string) => tableFor[id] ?? `unknown_source_${id}`)
-      .replaceAll('{{time}}', 'toStartOfInterval(dt, toIntervalSecond(300))')
-      .replaceAll('{{start_time}}', 'now() - INTERVAL 24 HOUR')
-      .replaceAll('{{end_time}}', 'now()');
-    const response = await fetch(`https://${host}?output_format_pretty_row_numbers=0`, {
-      method: 'POST',
-      headers: { authorization: `Basic ${auth}`, 'content-type': 'plain/text' },
-      body: `${sql} FORMAT JSONEachRow`,
-    });
-    const text = await response.text();
-    const ok = response.ok && !text.includes('"exception"') && !text.startsWith('Code:');
-    if (!ok) failed++;
-    const rows = ok ? text.trim().split('\n').filter(Boolean) : [];
-    console.log(
-      `${ok ? '✓' : '✗'} ${chart.name.padEnd(26)} ${ok ? `${rows.length} rows  ${rows.slice(0, 2).join(' ').slice(0, 150)}` : text.slice(0, 400)}`,
-    );
+  for (const chart of CHARTS.filter((c) => c.query)) {
+    const { name, sql } = QUERIES[chart.query!];
+    try {
+      const rows = await query(toDirectSql(sql(metricsTable), { hours: 24 }));
+      console.log(
+        `✓ ${name.padEnd(26)} ${rows.length} rows  ${JSON.stringify(rows.slice(0, 2)).slice(0, 150)}`,
+      );
+    } catch (error) {
+      failed++;
+      console.log(`✗ ${name.padEnd(26)} ${(error as Error).message}`);
+    }
   }
   process.exit(failed ? 1 : 0);
 }
 
-async function ensureMetrics(ids: Record<Service, string>) {
-  for (const service of SERVICES) {
+async function ensureMetrics(ids: Record<LogSource, string>) {
+  for (const service of LOG_SOURCES) {
     const url = `https://telemetry.betterstack.com/api/v2/sources/${ids[service]}/metrics`;
     const existing = new Set((await listAll(url)).map((m) => m.attributes.name));
     const missing = METRICS.filter((m) => !existing.has(m.name));
@@ -351,9 +171,9 @@ async function ensureStatusPage() {
         history: 30,
       })) as { data: Resource }
     ).data;
-    console.log(`status page created: ${STATUS_URL}`);
+    console.log(`status page created: ${STATUS_PAGE_URL}`);
   } else {
-    console.log(`status page exists: ${STATUS_URL}`);
+    console.log(`status page exists: ${STATUS_PAGE_URL}`);
   }
   const resourcesUrl = `https://uptime.betterstack.com/api/v2/status-pages/${page.id}/resources`;
   const existing = await listAll(resourcesUrl);
@@ -407,26 +227,29 @@ async function converge() {
   ).data;
   console.log(`dashboard "${DASHBOARD_NAME}" (id ${dashboard.id})`);
 
+  const onDashboard = (source: LogSource) => `{{source:${ids[source]}}}`;
   for (const chart of CHARTS) {
+    const query = chart.query && QUERIES[chart.query];
+    const name = query?.name ?? chart.name!;
     await api(
       'POST',
       `https://telemetry.betterstack.com/api/v2/dashboards/${dashboard.id}/charts`,
       {
         chart_type: chart.chart_type,
-        name: chart.name,
-        description: chart.description,
+        name,
+        description: query?.description ?? chart.description,
         x: chart.x,
         y: chart.y,
         w: chart.w,
         h: chart.h,
         queries: [
-          chart.text !== undefined
-            ? { query_type: 'static_text', static_text: chart.text }
-            : { query_type: 'sql_expression', sql_query: chart.sql!(ids) },
+          query
+            ? { query_type: 'sql_expression', sql_query: query.sql(onDashboard) }
+            : { query_type: 'static_text', static_text: chart.text },
         ],
       },
     );
-    console.log(`  chart "${chart.name}"`);
+    console.log(`  chart "${name}"`);
   }
 }
 

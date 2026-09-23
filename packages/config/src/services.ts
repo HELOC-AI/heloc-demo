@@ -41,6 +41,8 @@ export const intakeEnv = base.extend({
   WEB_APP_URL: url,
   /** Held by the inbound email adapter (Cloudflare Email Worker) to post Chase Replies. */
   INBOUND_API_KEY: apiKey,
+  /** Held by operator tooling (the /ops page server, scripts/ops.ts) for GET /v1/ops/*. */
+  OPS_API_KEY: apiKey,
 });
 export type IntakeConfig = z.output<typeof intakeEnv>;
 

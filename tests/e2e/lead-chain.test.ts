@@ -105,6 +105,7 @@ beforeAll(async () => {
         ALLOW_MOCK_OVERRIDE: 'true',
         WEB_APP_URL: 'https://heloc-demo.vercel.app',
         INBOUND_API_KEY: keys.inbound,
+        OPS_API_KEY: 'o'.repeat(64),
       }),
       logger: logger(),
       version: 'e2e',

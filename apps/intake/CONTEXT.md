@@ -89,3 +89,7 @@ _Avoid_: Log、Audit entry、History
 **Replay**:
 从上次停下的地方继续推进一个 Lead：缺预审就做预审，缺 Chase 就发 Chase，收到材料未审就做 Document Review，审完未通知就发 Outcome Notice，都已完成则什么都不做。Replay 从不重做已经完成的步骤。
 _Avoid_: Retry、Resubmit、Rerun
+
+**Lead Needing Attention**:
+运维需要处理的 Lead：已经 Failed 的，或者某一步推进超过 2 分钟仍未结束（Stuck）的。前者可以 Replay；后者说明推进途中进程中断，也用 Replay 恢复。
+_Avoid_: Broken lead、Error lead
