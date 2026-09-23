@@ -1,4 +1,4 @@
-import { HTTP_SERVICES, metricsTable, type LogSource } from './catalog.ts';
+import { HTTP_SERVICES, metricsTable, type HttpService } from './catalog.ts';
 
 /**
  * Fields promoted from logs to metrics at ingest time (labels = no aggregation). Dashboards
@@ -40,14 +40,6 @@ export const METRICS = [
   },
 ] as const;
 
-/** Every source also labels its rows with its own service name (a constant per source). */
-export const serviceMetric = (source: LogSource) => ({
-  name: 'heloc_service',
-  type: 'string_low_cardinality',
-  aggregations: [],
-  sql_expression: `'${source}'`,
-});
-
 /**
  * Where a query reads metrics from. Better Stack dashboards allow a single source reference per
  * query, so the four HTTP services are read as one union (their metrics tables share a schema),
@@ -62,16 +54,28 @@ export interface MetricsSource {
   service: string;
 }
 
+const INBOUND_ON_DASHBOARD = '{{source:heloc_email_inbound:metrics}}';
+
 /**
  * On a Better Stack dashboard: `{{__source_union__}}` is one UNION ALL over the sources selected
- * in the dashboard's source picker (the four HTTP services); rows name their service through the
- * constant `heloc_service` metric label, which fills from when it was defined.
+ * in the dashboard's source picker (the four HTTP services). Rows don't record their service, so
+ * per-service charts use {@link dashboardSourceFor} instead.
  */
 export const DASHBOARD_SOURCE: MetricsSource = {
   services: '{{__source_union__}}',
-  inbound: '{{source:heloc_email_inbound:metrics}}',
-  service: "ifNull(nullIf(label('heloc_service'), ''), 'unlabelled')",
+  inbound: INBOUND_ON_DASHBOARD,
+  service: "'all services'",
 };
+
+/**
+ * On a Better Stack dashboard, one service's metrics: per-service charts run one query per
+ * service (a chart may have several queries), each naming its rows — correct for all history.
+ */
+export const dashboardSourceFor = (service: HttpService): MetricsSource => ({
+  services: `{{source:heloc_${service.replace(/-/g, '_')}:metrics}}`,
+  inbound: INBOUND_ON_DASHBOARD,
+  service: `'${service}'`,
+});
 
 /** Through the SQL query API: the same split, each row tagged with its service (full history). */
 export const DIRECT_SOURCE: MetricsSource = {
@@ -85,6 +89,8 @@ export interface ChartQuery {
   name: string;
   description: string;
   sql: (source: MetricsSource) => string;
+  /** Broken down by service: on a dashboard, one query per service (see dashboardSourceFor). */
+  perService?: true;
 }
 
 const range = 'dt BETWEEN {{start_time}} AND {{end_time}}';
@@ -133,23 +139,27 @@ export const QUERIES = {
   errorsByService: {
     name: 'Errors by service',
     description: 'error/fatal log lines per service',
+    perService: true,
     sql: (src) => byService(src, 'sum(logs_count)', IS_ERROR),
   },
   http5xxByService: {
     name: 'HTTP 5xx by service',
     description: 'server errors per service',
     // Only HTTP request logs carry a status.
+    perService: true,
     sql: (src) => byService(src, `sumIf(logs_count, ${IS_5XX})`, "label('status') != ''"),
   },
   topErrors: {
     name: 'Top errors',
     description: 'most frequent error messages in the range',
+    perService: true,
     sql: ({ services, service }) =>
       `SELECT ${service} AS service, label('event') AS event, label('error_message') AS message, sum(logs_count) AS occurrences, max(dt) AS last_seen FROM ${services} WHERE ${range} AND ${IS_ERROR} AND label('error_message') != '' GROUP BY service, event, message ORDER BY occurrences DESC LIMIT 20`,
   },
   p95ResponseTime: {
     name: 'p95 response time (ms)',
     description: '95th percentile request latency per service',
+    perService: true,
     sql: (src) => byService(src, 'round(histogramQuantile(0.95), 1)', "name = 'response_time_ms'"),
   },
   leadPipeline: {

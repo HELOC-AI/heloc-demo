@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { ALERT_RULES } from './alert-rules.ts';
-import { LOG_SOURCES, PRODUCTION_URLS, metricsTable, serviceUrlsFrom } from './catalog.ts';
+import {
+  HTTP_SERVICES,
+  LOG_SOURCES,
+  PRODUCTION_URLS,
+  metricsTable,
+  serviceUrlsFrom,
+} from './catalog.ts';
 import { checkHealth } from './health.ts';
-import { DASHBOARD_SOURCE, DIRECT_SOURCE, QUERIES, toDirectSql } from './metrics.ts';
+import {
+  DASHBOARD_SOURCE,
+  DIRECT_SOURCE,
+  QUERIES,
+  dashboardSourceFor,
+  toDirectSql,
+} from './metrics.ts';
 import { loadOverview } from './overview.ts';
 import { createQueryClient } from './query-client.ts';
 import { readStatusPage } from './status-page.ts';
@@ -54,6 +66,18 @@ describe('QUERIES', () => {
     for (const query of Object.values(QUERIES)) {
       const refs = query.sql(DASHBOARD_SOURCE).match(/\{\{(source[^}]*|__source_union__)\}\}/g);
       expect(refs).toHaveLength(1);
+    }
+  });
+
+  it('run once per service on a dashboard when broken down by service', () => {
+    for (const query of Object.values(QUERIES).filter((q) => 'perService' in q)) {
+      for (const service of HTTP_SERVICES) {
+        const sql = query.sql(dashboardSourceFor(service));
+        expect(sql.match(/\{\{(source[^}]*|__source_union__)\}\}/g)).toEqual([
+          `{{source:heloc_${service.replace(/-/g, '_')}:metrics}}`,
+        ]);
+        expect(sql).toContain(`'${service}' AS`);
+      }
     }
   });
 });
