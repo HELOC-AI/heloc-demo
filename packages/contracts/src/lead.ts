@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CREDIT_BANDS, INCOME_BANDS, PURPOSES, US_STATES } from './common.ts';
-import { missingDocumentSchema, offerSchema } from './figure.ts';
+import { DOCUMENT_TYPES, offerSchema } from './figure.ts';
 
 /**
  * Accepts common US formats ("(415) 555-1234", "415.555.1234", "+1 415 555 1234")
@@ -16,6 +16,13 @@ export const phoneSchema = z
     return digits;
   })
   .pipe(z.string().regex(/^\+[1-9]\d{7,14}$/, 'Enter a valid phone number'));
+
+/** A document the borrower still has to provide, and why (Lead Intake language). */
+export const missingDocumentSchema = z.object({
+  type: z.enum(DOCUMENT_TYPES),
+  reason: z.string(),
+});
+export type MissingDocument = z.infer<typeof missingDocumentSchema>;
 
 const usd = z.number().finite().nonnegative().max(100_000_000);
 

@@ -38,18 +38,19 @@ export const offerSchema = z.object({
 });
 export type Offer = z.infer<typeof offerSchema>;
 
-export const missingDocumentSchema = z.object({
+/** Figure's term for a document it needs; Lead Intake translates it into a Missing Document. */
+export const requiredDocumentSchema = z.object({
   type: z.enum(DOCUMENT_TYPES),
   reason: z.string(),
 });
-export type MissingDocument = z.infer<typeof missingDocumentSchema>;
+export type RequiredDocument = z.infer<typeof requiredDocumentSchema>;
 
 export const softPullResponseSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('approved'), offer: offerSchema }),
   z.object({ status: z.literal('rejected'), reason: z.string() }),
   z.object({
     status: z.literal('need-more-documents'),
-    documents: z.array(missingDocumentSchema).min(1),
+    documents: z.array(requiredDocumentSchema).min(1),
   }),
 ]);
 export type SoftPullResponse = z.infer<typeof softPullResponseSchema>;

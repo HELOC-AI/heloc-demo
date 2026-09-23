@@ -12,6 +12,8 @@
     "@heloc/config": "workspace:*",
     "@heloc/contracts": "workspace:*",
     "@heloc/logger": "workspace:*",
-    "@heloc/server-kit": "workspace:*"
+    "@heloc/server-kit": "workspace:*",
+    "fastify": "^5.12.5",
+    "zod": "^4.6.5"
   }
 }
