@@ -132,6 +132,32 @@ for (const service of SERVICES) {
   }
 }
 
+const webUrl = env.WEB__PUBLIC_URL;
+if (process.argv.includes('--monitors') && webUrl) {
+  console.log('web:');
+  // Keyword check: the page must actually render, not just answer 200.
+  await findOrCreate(
+    'monitor',
+    'https://uptime.betterstack.com/api/v2/monitors',
+    `${PROJECT}-web`,
+    async () =>
+      (
+        (await api('POST', 'https://uptime.betterstack.com/api/v2/monitors', {
+          pronounceable_name: `${PROJECT}-web`,
+          url: webUrl,
+          monitor_type: 'keyword',
+          required_keyword: 'HELOC',
+          check_frequency: 60,
+          request_timeout: 15,
+          recovery_period: 60,
+          confirmation_period: 0,
+          email: true,
+        })) as { data: Resource }
+      ).data,
+    'pronounceable_name',
+  );
+}
+
 if (process.argv.includes('--alerts')) {
   console.log('alerts:');
   const sources = await listAll('https://telemetry.betterstack.com/api/v1/sources');
