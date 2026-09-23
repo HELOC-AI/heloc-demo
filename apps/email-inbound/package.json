@@ -1,0 +1,20 @@
+{
+  "name": "@heloc/email-inbound",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@heloc/contracts": "workspace:*",
+    "postal-mime": "^3.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260923.1",
+    "wrangler": "^4.136.3"
+  }
+}

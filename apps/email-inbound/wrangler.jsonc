@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "heloc-email-inbound",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  // No routes: the email trigger is the Email Routing rule for reply@linkerclaw.ai.
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "vars": {
+    "INTAKE_API_URL": "https://intake-production-12aa.up.railway.app",
+  },
+  // Secrets (wrangler secret put / deploy --secrets-file):
+  //   INTAKE_API_KEY, BETTERSTACK_SOURCE_TOKEN, BETTERSTACK_INGESTING_HOST
+}

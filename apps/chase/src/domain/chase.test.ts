@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryKey, documentRequest, firstName } from './chase.ts';
+import { parseChaseReplyAddress } from '@heloc/contracts';
+import {
+  deliveryKey,
+  documentRequest,
+  firstName,
+  noticeDeliveryKey,
+  replyAddressFor,
+} from './chase.ts';
 
 describe('documentRequest', () => {
   it('uses the borrower-facing label', () => {
@@ -29,5 +36,23 @@ describe('firstName', () => {
     ['Cher', 'Cher'],
   ])('%s → %s', (name, expected) => {
     expect(firstName({ name, email: 'x@y.z' })).toBe(expected);
+  });
+});
+
+describe('replyAddressFor', () => {
+  const chaseId = '22222222-2222-4222-8222-222222222222';
+
+  it('subaddresses the base Reply Address with the chase id', () => {
+    expect(replyAddressFor('reply@linkerclaw.ai', chaseId)).toBe(`reply+${chaseId}@linkerclaw.ai`);
+  });
+
+  it('round-trips through the parser Lead Intake uses', () => {
+    expect(parseChaseReplyAddress(replyAddressFor('reply@linkerclaw.ai', chaseId))).toBe(chaseId);
+  });
+});
+
+describe('noticeDeliveryKey', () => {
+  it('differs from the chase key namespace', () => {
+    expect(noticeDeliveryKey({ noticeId: 'abc' })).toBe('notice:abc');
   });
 });

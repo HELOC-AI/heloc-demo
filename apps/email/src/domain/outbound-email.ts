@@ -7,6 +7,8 @@ export interface OutboundEmail {
   subject: string;
   text: string;
   html: string;
+  /** Where the recipient's reply should go. */
+  replyTo?: string | undefined;
 }
 
 export interface DeliveryReceipt {
@@ -25,6 +27,9 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function outboundEmail(input: OutboundEmail): OutboundEmail {
   if (!EMAIL.test(input.to)) throw new InvalidEmailError('to: not an email address');
+  if (input.replyTo !== undefined && !EMAIL.test(input.replyTo)) {
+    throw new InvalidEmailError('reply_to: not an email address');
+  }
   // A line break in a header value would let a caller inject extra headers.
   if (!input.subject.trim() || /[\r\n]/.test(input.subject)) {
     throw new InvalidEmailError('subject: must be a single non-empty line');

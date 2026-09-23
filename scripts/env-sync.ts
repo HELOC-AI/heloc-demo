@@ -69,6 +69,7 @@ function writeLocal() {
       CHASE_API_KEY: key('CHASE__INTERNAL_API_KEY'),
       CORS_ORIGINS: 'http://localhost:3000',
       ALLOW_MOCK_OVERRIDE: 'true',
+      WEB_APP_URL: 'http://localhost:3000',
     },
     'figure-mock': {
       ...common,
@@ -82,6 +83,7 @@ function writeLocal() {
       ...withoutBetterStack(secretsFor('chase')),
       EMAIL_SERVICE_URL: 'http://localhost:4003',
       EMAIL_SERVICE_API_KEY: key('EMAIL__INTERNAL_API_KEY'),
+      CHASE_REPLY_ADDRESS: 'reply@linkerclaw.ai',
     },
     email: {
       ...common,

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { CREDIT_BANDS, INCOME_BANDS, PURPOSES, US_STATES } from './common.ts';
-import { DOCUMENT_TYPES, offerSchema } from './figure.ts';
+import {
+  DOCUMENT_TYPES,
+  offerSchema,
+  REJECTION_REASONS,
+  submittedAttachmentSchema,
+} from './figure.ts';
 
 /**
  * Accepts common US formats ("(415) 555-1234", "415.555.1234", "+1 415 555 1234")
@@ -48,6 +53,7 @@ export const LEAD_STATUSES = [
   'rejected',
   'need_more_documents',
   'chase_sent',
+  'documents_received',
   'failed',
 ] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
@@ -63,24 +69,57 @@ export const LEAD_EVENT_TYPES = [
   'chase.created',
   'email.sent',
   'email.failed',
+  'documents.received',
+  'documents.rejected',
+  'figure.review_requested',
+  'figure.review_approved',
+  'figure.review_rejected',
+  'notice.created',
+  'notice.sent',
+  'notice.failed',
 ] as const;
 export type LeadEventType = (typeof LEAD_EVENT_TYPES)[number];
+
+/** The step a `failed` Lead will resume from on Replay. */
+export const LEAD_STEPS = ['prequalify', 'chase', 'review', 'notify'] as const;
+export type LeadStep = (typeof LEAD_STEPS)[number];
 
 /** Response of POST /v1/leads, POST /v1/leads/:id/replay and GET /v1/leads/:id. */
 export const leadResultSchema = z.object({
   lead_id: z.uuid(),
   status: z.enum(LEAD_STATUSES),
+  /** The final offer: from the soft pull, or from the document review. */
   offer: offerSchema.optional(),
-  reason: z.string().optional(),
+  reason: z.enum(REJECTION_REASONS).optional(),
+  /** Documents Figure asked for (Need More Documents). */
   documents: z.array(missingDocumentSchema).optional(),
   chase: z
     .object({
       status: z.enum(['pending', 'sent', 'failed']),
       sent_at: z.iso.datetime().nullable(),
+      /** Borrower address, masked for display, e.g. `j***@example.com`. */
+      sent_to: z.string(),
+      /** Where the borrower replies with documents, when the Chase has been sent. */
+      reply_to: z.string().nullable(),
     })
     .optional(),
-  /** Why the Lead is `failed`; replay resumes from the failed step. */
+  /** The borrower's accepted reply with documents. */
+  documents_received: z
+    .object({
+      received_at: z.iso.datetime(),
+      attachments: z.array(submittedAttachmentSchema),
+    })
+    .optional(),
+  /** The email telling the borrower the result of the document review. */
+  notice: z
+    .object({
+      status: z.enum(['pending', 'sent', 'failed']),
+      sent_at: z.iso.datetime().nullable(),
+    })
+    .optional(),
+  /** Why the Lead is `failed`; Replay resumes from `failed_step`. */
   error: z.string().optional(),
+  failed_step: z.enum(LEAD_STEPS).optional(),
   /** The Lead's execution chain, oldest first. */
   events: z
     .array(

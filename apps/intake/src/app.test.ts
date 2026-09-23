@@ -1,7 +1,7 @@
 import { Writable } from 'node:stream';
 import { PGlite } from '@electric-sql/pglite';
 import { intakeEnv, loadConfig } from '@heloc/config';
-import { leadResultSchema } from '@heloc/contracts';
+import { inboundEmailResponseSchema, leadResultSchema } from '@heloc/contracts';
 import { createLogger } from '@heloc/logger';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -13,11 +13,12 @@ import {
   type Database,
 } from './infrastructure/db/drizzle-lead-repository.ts';
 import * as schema from './infrastructure/db/schema.ts';
-import { FakeChases, FakePrequal } from './testing/fakes.ts';
+import { FakeChases, FakeNotices, FakePrequal } from './testing/fakes.ts';
 
 const silent = new Writable({ write: (_c, _e, cb) => cb() });
 const key = 'k'.repeat(64);
 const WEB = 'https://heloc-demo.vercel.app';
+const INBOUND_KEY = 'i'.repeat(64);
 
 const approved: PrequalDecision = {
   outcome: 'approved',
@@ -51,6 +52,8 @@ const quiz = {
 let app: ReturnType<typeof buildApp>;
 let prequal: FakePrequal;
 let chases: FakeChases;
+let notices: FakeNotices;
+let background: Promise<unknown>[] = [];
 let pingFails = false;
 let db: Database;
 
@@ -67,6 +70,8 @@ async function build({ allowMockOverride = true } = {}) {
       CHASE_API_KEY: key,
       CORS_ORIGINS: WEB,
       ALLOW_MOCK_OVERRIDE: String(allowMockOverride),
+      WEB_APP_URL: WEB,
+      INBOUND_API_KEY: INBOUND_KEY,
     }),
     logger: createLogger({ service: 'test', destination: silent }).logger,
     version: 'test',
@@ -76,6 +81,8 @@ async function build({ allowMockOverride = true } = {}) {
     },
     prequal,
     chases,
+    notices,
+    onBackground: (work) => background.push(work),
   });
   return app;
 }
@@ -83,6 +90,8 @@ async function build({ allowMockOverride = true } = {}) {
 beforeEach(() => {
   prequal = new FakePrequal(approved);
   chases = new FakeChases();
+  notices = new FakeNotices();
+  background = [];
   pingFails = false;
 });
 afterEach(() => app?.close());
@@ -255,5 +264,130 @@ describe('CORS', () => {
     await build();
     const res = await preflight('https://evil.example');
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});
+
+describe('POST /v1/inbound-emails', () => {
+  const inbound = (chaseId: string, overrides: Record<string, unknown> = {}) => ({
+    message_id: '<reply-1@mail.example.com>',
+    received_at: '2026-09-23T01:00:00.000Z',
+    from: 'john@example.com',
+    to: `reply+${chaseId}@linkerclaw.ai`,
+    subject: 'Re: Additional documents required for your HELOC application',
+    authentication: {
+      dmarc: 'pass',
+      detail: 'mx.cloudflare.net; dmarc=pass header.from=example.com',
+    },
+    attachments: [
+      {
+        filename: 'paystub.pdf',
+        content_type: 'application/pdf',
+        size: 1234,
+        sha256: 'a'.repeat(64),
+      },
+    ],
+    ...overrides,
+  });
+  const post = (payload: object, key = INBOUND_KEY) =>
+    app.inject({
+      method: 'POST',
+      url: '/v1/inbound-emails',
+      headers: { authorization: `Bearer ${key}` },
+      payload,
+    });
+
+  async function chased() {
+    prequal.next = needDocs;
+    const created = (await submit()).json();
+    const chaseId = /reply\+([0-9a-f-]{36})@/.exec(created.chase.reply_to)![1]!;
+    return { leadId: created.lead_id as string, chaseId, created };
+  }
+
+  it('shows the borrower where to reply, with their email masked', async () => {
+    const { created } = await chased();
+    expect(created.chase).toMatchObject({
+      status: 'sent',
+      sent_to: 'j***@example.com',
+      reply_to: expect.stringMatching(/^reply\+[0-9a-f-]{36}@linkerclaw\.ai$/),
+    });
+  });
+
+  it('only accepts the inbound adapter key', async () => {
+    const { chaseId } = await chased();
+    expect((await post(inbound(chaseId), 'x'.repeat(64))).statusCode).toBe(401);
+    expect((await post(inbound(chaseId), key)).statusCode).toBe(401); // another hop's key
+  });
+
+  it('accepts a Chase Reply and completes review + notice in the background', async () => {
+    const { leadId, chaseId } = await chased();
+    const res = await post(inbound(chaseId));
+    expect(res.statusCode).toBe(202);
+    expect(inboundEmailResponseSchema.parse(res.json())).toEqual({
+      accepted: true,
+      lead_id: leadId,
+    });
+
+    await Promise.all(background);
+    const result = leadResultSchema.parse(
+      (await app.inject({ method: 'GET', url: `/v1/leads/${leadId}` })).json(),
+    );
+    expect(result).toMatchObject({
+      status: 'approved',
+      offer: { amount: 250_000 },
+      documents_received: {
+        received_at: '2026-09-23T01:00:00.000Z',
+        attachments: [{ filename: 'paystub.pdf', content_type: 'application/pdf', size: 1234 }],
+      },
+      notice: { status: 'sent' },
+    });
+    expect(notices.calls[0]?.resultUrl).toBe(`${WEB}/result/${leadId}`);
+  });
+
+  it.each([
+    [{ authentication: { dmarc: 'fail', detail: 'dmarc=fail' } }, 'not_authenticated'],
+    [{ from: 'attacker@example.com' }, 'sender_mismatch'],
+    [{ attachments: [] }, 'no_attachments'],
+  ])('refuses %o as %s', async (overrides, reason) => {
+    const { leadId, chaseId } = await chased();
+    const res = await post(inbound(chaseId, overrides));
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ accepted: false, reason, lead_id: leadId });
+    expect(background).toHaveLength(0);
+  });
+
+  it('ignores mail that is not a Chase Reply', async () => {
+    await build();
+    const res = await post(inbound('x', { to: 'reply@linkerclaw.ai' }));
+    expect(res.json()).toEqual({ accepted: false, reason: 'not_a_chase_reply' });
+  });
+
+  it('reports an unknown chase', async () => {
+    await build();
+    const res = await post(inbound('33333333-3333-4333-8333-333333333333'));
+    expect(res.json()).toEqual({ accepted: false, reason: 'unknown_chase' });
+  });
+
+  it('treats a redelivered reply as accepted without reviewing twice', async () => {
+    const { chaseId } = await chased();
+    await post(inbound(chaseId));
+    await Promise.all(background);
+    const again = await post(inbound(chaseId));
+    expect(again.json().accepted).toBe(true);
+    await Promise.all(background);
+    expect(prequal.reviews).toHaveLength(1);
+    expect(notices.delivered.size).toBe(1);
+  });
+
+  it('reports a failed step on replay-able failures', async () => {
+    const { leadId, chaseId } = await chased();
+    notices.failWith = new Error('chase: HTTP 502');
+    await post(inbound(chaseId));
+    await Promise.all(background);
+    const result = (await app.inject({ method: 'GET', url: `/v1/leads/${leadId}` })).json();
+    expect(result).toMatchObject({
+      status: 'failed',
+      failed_step: 'notify',
+      error: 'chase: HTTP 502',
+    });
   });
 });

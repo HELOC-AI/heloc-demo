@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Chase } from '../domain/chase.ts';
+import type { Chase, OutcomeNotice } from '../domain/chase.ts';
 import { TemplateComposer } from './template-composer.ts';
 
 const chase = (overrides: Partial<Chase> = {}): Chase => ({
@@ -7,6 +7,7 @@ const chase = (overrides: Partial<Chase> = {}): Chase => ({
   leadId: 'l1',
   borrower: { name: 'John Doe', email: 'john@example.com' },
   requests: [{ label: 'Proof of income', reason: 'Income requires verification' }],
+  replyAddress: 'reply+c1@linkerclaw.ai',
   ...overrides,
 });
 
@@ -24,6 +25,8 @@ describe('TemplateComposer', () => {
         '',
         '- Proof of income',
         '  Reason: Income requires verification.',
+        '',
+        'Simply reply to this email and attach the documents — we will pick them up automatically.',
         '',
         'Thanks.',
       ].join('\n'),
@@ -54,5 +57,48 @@ describe('TemplateComposer', () => {
     );
     expect(message.html).not.toContain('<script>');
     expect(message.html).toContain('&#60;script&#62;');
+  });
+});
+
+describe('TemplateComposer.composeOutcome', () => {
+  const notice = (outcome: OutcomeNotice['outcome']): OutcomeNotice => ({
+    noticeId: 'n1',
+    leadId: 'l1',
+    borrower: { name: 'John Doe', email: 'john@example.com' },
+    outcome,
+    resultUrl: 'https://heloc-demo.vercel.app/result/l1',
+  });
+
+  it('summarises the offer and links to the result page', () => {
+    const message = new TemplateComposer().composeOutcome(
+      notice({
+        status: 'approved',
+        offer: {
+          lender: 'Figure mock',
+          amount: 250_000,
+          aprMin: 7.5,
+          aprMax: 9.5,
+          termMonths: 120,
+          estimatedMonthlyPayment: 2_968,
+          expiresAt: new Date('2026-10-23T00:00:00Z'),
+        },
+      }),
+    );
+    expect(message.subject).toBe('Your HELOC offer is ready');
+    expect(message.text).toContain('- Credit line: $250,000');
+    expect(message.text).toContain('- APR: 7.5% – 9.5%');
+    expect(message.text).toContain('- Term: 10 years');
+    expect(message.text).toContain('- Offer valid until: October 23, 2026');
+    expect(message.text).toContain('View your offer: https://heloc-demo.vercel.app/result/l1');
+    expect(message.html).toContain('href="https://heloc-demo.vercel.app/result/l1"');
+  });
+
+  it('explains a rejection in plain words', () => {
+    const message = new TemplateComposer().composeOutcome(
+      notice({ status: 'rejected', reason: 'credit_below_minimum' }),
+    );
+    expect(message.subject).toBe('An update on your HELOC application');
+    expect(message.text).toContain('below our current minimum');
+    expect(message.text).not.toContain('credit_below_minimum');
   });
 });

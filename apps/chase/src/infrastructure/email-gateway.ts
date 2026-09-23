@@ -13,11 +13,21 @@ export class EmailHttpGateway implements EmailGateway {
   async send(
     to: string,
     message: ChaseMessage,
-    options: { idempotencyKey: string; requestId?: string | undefined },
+    options: {
+      idempotencyKey: string;
+      replyTo?: string | undefined;
+      requestId?: string | undefined;
+    },
   ): Promise<Delivery> {
     const response = await this.#client.post(
       '/v1/send',
-      { to, subject: message.subject, text: message.text, html: message.html },
+      {
+        to,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        ...(options.replyTo && { reply_to: options.replyTo }),
+      },
       {
         responseSchema: sendEmailResponseSchema,
         requestId: options.requestId,

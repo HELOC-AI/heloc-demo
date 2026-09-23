@@ -22,7 +22,7 @@ describe('ResendProvider', () => {
   it('sends with the sender and forwards the idempotency key', async () => {
     const fetchMock = stubFetch(200, { id: 'email_123' });
     const receipt = await new ResendProvider('re_test').send(
-      email,
+      { ...email, replyTo: 'reply+abc@linkerclaw.ai' },
       'HELOC <noreply@linkerclaw.ai>',
       {
         idempotencyKey: 'chase:abc',
@@ -41,6 +41,7 @@ describe('ResendProvider', () => {
       subject: 'Hello',
       text: 'Hi',
       html: '<p>Hi</p>',
+      reply_to: 'reply+abc@linkerclaw.ai',
     });
   });
 

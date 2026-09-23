@@ -10,6 +10,7 @@ export type LeadStatus =
   | 'rejected'
   | 'need_more_documents'
   | 'chase_sent'
+  | 'documents_received'
   | 'failed';
 
 export interface Borrower {
@@ -51,14 +52,32 @@ export type PrequalDecision =
 
 export type ChaseStatus = 'pending' | 'sent' | 'failed';
 
+export interface SubmittedAttachment {
+  filename: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+}
+
+/** The borrower's accepted reply to a Chase, carrying the requested documents. */
+export interface ChaseReply {
+  messageId: string;
+  receivedAt: Date;
+  from: string;
+  attachments: SubmittedAttachment[];
+}
+
 export interface Chase {
   id: string;
   status: ChaseStatus;
   subject?: string | undefined;
   body?: string | undefined;
   emailMessageId?: string | undefined;
+  /** The Reply Address Borrower Outreach gave this Chase. */
+  replyTo?: string | undefined;
   sentAt?: Date | undefined;
   lastError?: string | undefined;
+  reply?: ChaseReply | undefined;
 }
 
 /** What the Chase recipient saw, as reported back by Borrower Outreach. */
@@ -66,11 +85,60 @@ export interface ChaseDelivery {
   subject: string;
   body: string;
   emailMessageId: string;
+  replyTo: string;
   sentAt: Date;
 }
 
-/** The step a Lead needs next; derived from its decision and Chase, not from its status. */
-export type NextStep = 'prequalify' | 'chase' | 'done';
+/** An email claiming to be a Chase Reply, before the Lead decides to accept it. */
+export interface IncomingReply {
+  messageId: string;
+  receivedAt: Date;
+  from: string;
+  /** The receiving mail server's DMARC verdict for the From domain. */
+  dmarc: 'pass' | 'fail' | 'none' | 'unknown';
+  attachments: SubmittedAttachment[];
+}
+
+export type ReplyRejection =
+  | 'chase_not_sent'
+  | 'already_received'
+  | 'not_authenticated'
+  | 'sender_mismatch'
+  | 'no_attachments';
+
+export type ReplyOutcome =
+  { accepted: true; duplicate: boolean } | { accepted: false; reason: ReplyRejection };
+
+/** Figure's final call on the submitted documents (resolves Need More Documents). */
+export type ReviewDecision =
+  { outcome: 'approved'; offer: Offer } | { outcome: 'rejected'; reason: string };
+
+export type NoticeStatus = 'pending' | 'sent' | 'failed';
+
+/** The email telling the borrower the Document Review's result. */
+export interface OutcomeNotice {
+  id: string;
+  status: NoticeStatus;
+  subject?: string | undefined;
+  body?: string | undefined;
+  emailMessageId?: string | undefined;
+  sentAt?: Date | undefined;
+  lastError?: string | undefined;
+}
+
+export interface NoticeDelivery {
+  subject: string;
+  body: string;
+  emailMessageId: string;
+  sentAt: Date;
+}
+
+/**
+ * The step a Lead needs next; derived from its decision, Chase, review and notice —
+ * not from its status — so a `failed` Lead knows where Replay resumes.
+ */
+export type NextStep = 'prequalify' | 'chase' | 'review' | 'notify' | 'done';
+export type Step = Exclude<NextStep, 'done'>;
 
 export type LeadEventType =
   | 'lead.created'
@@ -82,7 +150,15 @@ export type LeadEventType =
   | 'figure.need_more_documents'
   | 'chase.created'
   | 'email.sent'
-  | 'email.failed';
+  | 'email.failed'
+  | 'documents.received'
+  | 'documents.rejected'
+  | 'figure.review_requested'
+  | 'figure.review_approved'
+  | 'figure.review_rejected'
+  | 'notice.created'
+  | 'notice.sent'
+  | 'notice.failed';
 
 /** Payloads carry ids and outcomes only — never borrower PII. */
 export interface LeadEvent {

@@ -50,6 +50,26 @@ export function formatDateTime(iso: string, { timeZone }: FormatOptions = {}): s
   }).format(new Date(iso));
 }
 
+const FILE_SIZE_UNITS = ['KB', 'MB', 'GB'] as const;
+
+/** 812 → "812 bytes", 48_300 → "47 KB", 2_400_000 → "2.3 MB" (1 KB = 1,024 bytes). */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 1024) {
+    const whole = Math.max(0, Math.round(Number.isFinite(bytes) ? bytes : 0));
+    return `${whole} ${whole === 1 ? 'byte' : 'bytes'}`;
+  }
+  let value = bytes;
+  let unit: (typeof FILE_SIZE_UNITS)[number] = 'KB';
+  for (const next of FILE_SIZE_UNITS) {
+    value /= 1024;
+    unit = next;
+    if (value < 1024) break;
+  }
+  // One decimal below 10 ("2.3 MB"), whole numbers above ("47 KB"), no trailing ".0".
+  const rounded = value < 10 ? Math.round(value * 10) / 10 : Math.round(value);
+  return `${rounded} ${unit}`;
+}
+
 /** "3:04:05 PM" (Lead Events happen seconds apart). */
 export function formatTime(iso: string, { timeZone }: FormatOptions = {}): string {
   return new Intl.DateTimeFormat('en-US', { timeStyle: 'medium', timeZone }).format(new Date(iso));

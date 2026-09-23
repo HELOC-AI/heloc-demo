@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ConcurrencyError } from '../domain/lead-repository.ts';
-import type { PrequalDecision } from '../domain/model.ts';
+import type { IncomingReply, PrequalDecision } from '../domain/model.ts';
 import {
   FakeChases,
+  FakeNotices,
   FakePrequal,
   InMemoryLeads,
   sequentialIds,
@@ -39,19 +40,23 @@ const input = {
 let leads: InMemoryLeads;
 let prequal: FakePrequal;
 let chases: FakeChases;
+let notices: FakeNotices;
 let useCases: ReturnType<typeof createLeadUseCases>;
 
 function setup(decision: PrequalDecision | Error) {
   leads = new InMemoryLeads();
   prequal = new FakePrequal(decision);
   chases = new FakeChases();
+  notices = new FakeNotices();
   useCases = createLeadUseCases({
     leads,
     timeline: leads,
     prequal,
     chases,
+    notices,
     clock: { now: () => new Date('2026-09-23T00:00:00Z') },
     ids: sequentialIds(),
+    resultUrl: (id) => `https://heloc-demo.vercel.app/result/${id}`,
   });
 }
 
@@ -216,5 +221,104 @@ describe('concurrency', () => {
     await leads.save(first);
     second.replay(new Date());
     await expect(leads.save(second)).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+});
+
+describe('chase reply → document review → outcome notice', () => {
+  const reply = (overrides: Partial<IncomingReply> = {}): IncomingReply => ({
+    messageId: '<reply-1@mail.example.com>',
+    receivedAt: new Date('2026-09-23T01:00:00Z'),
+    from: 'john@example.com',
+    dmarc: 'pass',
+    attachments: [
+      {
+        filename: 'paystub.pdf',
+        contentType: 'application/pdf',
+        size: 1234,
+        sha256: 'a'.repeat(64),
+      },
+    ],
+    ...overrides,
+  });
+
+  async function chasedLead() {
+    setup(needDocs);
+    const lead = await submit();
+    return { lead, chaseId: lead.chase!.id };
+  }
+
+  const receive = (chaseId: string, overrides: Partial<IncomingReply> = {}) =>
+    useCases.receiveChaseReply(chaseId, reply(overrides), silentLogger);
+  const resume = async (id: string) => (await useCases.continueLead(id, {}, silentLogger)).lead;
+
+  it('accepts the reply, reviews the documents and notifies the borrower', async () => {
+    const { lead, chaseId } = await chasedLead();
+    expect(lead.status).toBe('chase_sent');
+    expect(lead.nextStep()).toBe('done');
+
+    expect(await receive(chaseId)).toEqual({
+      outcome: { accepted: true, duplicate: false },
+      leadId: lead.id,
+    });
+    const done = await resume(lead.id);
+    expect(done.status).toBe('approved');
+    expect(prequal.reviews).toEqual([
+      expect.objectContaining({
+        documents: needDocs.missingDocuments,
+        attachments: [{ filename: 'paystub.pdf', contentType: 'application/pdf', size: 1234 }],
+      }),
+    ]);
+    expect(notices.calls).toEqual([
+      expect.objectContaining({
+        borrowerEmail: 'john@example.com',
+        outcome: prequal.nextReview,
+        resultUrl: `https://heloc-demo.vercel.app/result/${lead.id}`,
+      }),
+    ]);
+    expect(eventTypes(lead.id).slice(-5)).toEqual([
+      'documents.received',
+      'figure.review_requested',
+      'figure.review_approved',
+      'notice.created',
+      'notice.sent',
+    ]);
+  });
+
+  it('refuses a reply from someone else without touching the Lead', async () => {
+    const { lead, chaseId } = await chasedLead();
+    const result = await receive(chaseId, { from: 'attacker@example.com' });
+    expect(result.outcome).toEqual({ accepted: false, reason: 'sender_mismatch' });
+    expect((await resume(lead.id)).status).toBe('chase_sent');
+    expect(prequal.reviews).toHaveLength(0);
+  });
+
+  it('reports an unknown chase', async () => {
+    setup(needDocs);
+    expect(await receive('33333333-3333-4333-8333-333333333333')).toEqual({
+      outcome: { accepted: false, reason: 'unknown_chase' },
+    });
+  });
+
+  it('replays a failed review, then a failed notice, without duplicating either', async () => {
+    const { lead, chaseId } = await chasedLead();
+    await receive(chaseId);
+
+    prequal.nextReview = new Error('figure-mock: HTTP 503');
+    expect((await resume(lead.id)).status).toBe('failed');
+    expect((await leads.findById(lead.id))!.nextStep()).toBe('review');
+
+    prequal.nextReview = { outcome: 'rejected', reason: 'credit_below_minimum' };
+    notices.failWith = new Error('chase: HTTP 502');
+    const afterReview = await replay(lead.id);
+    expect(afterReview.status).toBe('failed');
+    expect(afterReview.nextStep()).toBe('notify');
+
+    notices.failWith = undefined;
+    const done = await replay(lead.id);
+    expect(done.status).toBe('rejected');
+    expect(done.nextStep()).toBe('done');
+    expect(prequal.reviews).toHaveLength(2); // one failed attempt, one recorded review
+    expect(new Set(notices.calls.map((c) => c.noticeId)).size).toBe(1);
+    expect(notices.delivered.size).toBe(1);
   });
 });

@@ -6,6 +6,7 @@ import { leadApi } from '@/lib/api';
 import { ApplicationDetails } from './application-details';
 import {
   DocumentsCard,
+  DocumentsReceivedCard,
   FailedCard,
   LoadErrorCard,
   LoadingCard,
@@ -13,13 +14,18 @@ import {
   OfferCard,
   PendingCard,
   RejectedCard,
+  reviewContext,
   StartOverLink,
+  type Watch,
 } from './status-cards';
 import { useLead } from './use-lead';
 
-/** The result page: shows a Lead's Prequal Decision, Missing Documents, or failure + Replay. */
+/**
+ * The result page: shows a Lead's decision, the documents still needed and how to send
+ * them, the Document Review in progress, or a failure + Replay.
+ */
 export function LeadResultView({ leadId }: { leadId: string }) {
-  const { state, reload, show } = useLead(leadId);
+  const { state, reload, refresh, show } = useLead(leadId);
   const [replaying, setReplaying] = useState(false);
   const [replayError, setReplayError] = useState<string>();
 
@@ -58,53 +64,73 @@ export function LeadResultView({ leadId }: { leadId: string }) {
       return <NotFoundCard />;
     case 'error':
       return <LoadErrorCard message={state.message} onRetry={reload} />;
-    case 'ready':
+    case 'ready': {
+      const { lead, stalled, watching, checking, checkFailed, checkedAt } = state;
       return (
         <div className="space-y-6">
           <StatusCard
-            lead={state.lead}
-            stalled={state.stalled}
-            onCheckAgain={reload}
+            lead={lead}
+            stalled={stalled}
+            watch={{ watching, checking, checkFailed, checkedAt, onCheckAgain: refresh }}
             replay={{ replaying, replayError, onReplay: replay }}
           />
-          <ApplicationDetails lead={state.lead} />
-          {state.lead.status !== 'rejected' && (
+          <ApplicationDetails lead={lead} />
+          {lead.status !== 'rejected' && !hasRejection(lead) && (
             <div className="flex justify-center">
               <StartOverLink />
             </div>
           )}
         </div>
       );
+    }
   }
+}
+
+/** A failed Outcome Notice still has a decision to show (the RejectedCard has its own link). */
+function hasRejection(lead: LeadResult): boolean {
+  return lead.status === 'failed' && lead.failed_step === 'notify' && !lead.offer && !!lead.reason;
 }
 
 function StatusCard({
   lead,
   stalled,
-  onCheckAgain,
+  watch,
   replay,
 }: {
   lead: LeadResult;
   stalled: boolean;
-  onCheckAgain: () => void;
+  watch: Watch;
   replay: { replaying: boolean; replayError: string | undefined; onReplay: () => void };
 }) {
   switch (lead.status) {
     case 'approved':
       return lead.offer ? (
-        <OfferCard offer={lead.offer} />
+        <OfferCard offer={lead.offer} review={reviewContext(lead)} />
       ) : (
-        <PendingCard stalled onCheckAgain={onCheckAgain} />
+        <PendingCard stalled onCheckAgain={watch.onCheckAgain} />
       );
     case 'rejected':
-      return <RejectedCard reason={lead.reason} />;
+      return <RejectedCard reason={lead.reason} review={reviewContext(lead)} />;
     case 'need_more_documents':
     case 'chase_sent':
-      return <DocumentsCard lead={lead} />;
+      return <DocumentsCard lead={lead} watch={watch} />;
+    case 'documents_received':
+      return <DocumentsReceivedCard lead={lead} stalled={stalled} watch={watch} />;
     case 'failed':
-      return <FailedCard error={lead.error} {...replay} />;
+      return (
+        <>
+          <FailedCard step={lead.failed_step} error={lead.error} {...replay} />
+          {/* Failing to send the Outcome Notice doesn't undo the decision: show it. */}
+          {lead.failed_step === 'notify' &&
+            (lead.offer ? (
+              <OfferCard offer={lead.offer} review={reviewContext(lead)} />
+            ) : (
+              lead.reason && <RejectedCard reason={lead.reason} review={reviewContext(lead)} />
+            ))}
+        </>
+      );
     case 'submitted':
     case 'processing':
-      return <PendingCard stalled={stalled} onCheckAgain={onCheckAgain} />;
+      return <PendingCard stalled={stalled} onCheckAgain={watch.onCheckAgain} />;
   }
 }

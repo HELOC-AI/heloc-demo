@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { HELOC_LIMITS } from '@heloc/contracts';
 import {
   availableEquity,
   calculateOffer,
   evaluate,
   force,
+  MAX_COMBINED_LTV,
+  MAX_LINE,
   MIN_LINE,
   monthlyPayment,
+  reviewDocuments,
 } from './soft-pull-policy.ts';
 import type { SoftPull } from './soft-pull.ts';
 
@@ -121,6 +125,38 @@ describe('force', () => {
     expect(force(pull({ creditBand: '780+' }), 'rejected', now).status).toBe('rejected');
     expect(force(pull({ creditBand: '780+' }), 'need-more-documents', now).status).toBe(
       'need-more-documents',
+    );
+  });
+});
+
+describe('reviewDocuments', () => {
+  it('approves a need-more-documents profile once documents are in', () => {
+    const outcome = reviewDocuments(pull({ creditBand: '700-739' }), now);
+    expect(outcome.status).toBe('approved');
+    expect(outcome.status === 'approved' && outcome.offer.amount).toBe(250_000);
+  });
+
+  it('still enforces the hard limits', () => {
+    expect(reviewDocuments(pull({ creditBand: '<580' }), now)).toEqual({
+      status: 'rejected',
+      reason: 'credit_below_minimum',
+    });
+    expect(reviewDocuments(pull({ mortgageBalance: 670_000 }), now)).toEqual({
+      status: 'rejected',
+      reason: 'insufficient_home_equity',
+    });
+  });
+
+  it('honours a forced outcome', () => {
+    expect(reviewDocuments(pull(), now, 'rejected').status).toBe('rejected');
+    expect(reviewDocuments(pull({ creditBand: '<580' }), now, 'approved').status).toBe('approved');
+  });
+});
+
+describe('published limits', () => {
+  it('match the product limits in the contracts', () => {
+    expect({ maxCombinedLtv: MAX_COMBINED_LTV, minLine: MIN_LINE, maxLine: MAX_LINE }).toEqual(
+      HELOC_LIMITS,
     );
   });
 });

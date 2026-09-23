@@ -19,3 +19,11 @@ _Avoid_: Email、Template、Letter
 **Composer**:
 把 Chase 写成 Chase Message 的方式。第一版是固定模板，将来可以换成 LLM 撰写。
 _Avoid_: Generator、Renderer
+
+**Reply Address**:
+Chase Message 的回复地址，形如 `reply+<chase id>@linkerclaw.ai`；借款人回复这个地址即把材料交给这个 Chase。
+_Avoid_: Inbox、Upload address
+
+**Outcome Notice**:
+Document Review 出结论后发给借款人的一封信：通过则附报价摘要，拒绝则说明原因，并附结果页链接。
+_Avoid_: Result email

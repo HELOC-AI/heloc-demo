@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import { chaseEnv, loadConfig } from '@heloc/config';
-import { chaseResponseSchema } from '@heloc/contracts';
+import { chaseResponseSchema, outcomeNoticeResponseSchema } from '@heloc/contracts';
 import { createLogger } from '@heloc/logger';
 import { UpstreamError } from '@heloc/server-kit';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -24,16 +24,27 @@ class FakeEmail implements EmailGateway {
     to: string;
     message: ChaseMessage;
     key: string;
+    replyTo?: string | undefined;
     requestId?: string | undefined;
   }[] = [];
   failWith: Error | undefined;
   async send(
     to: string,
     message: ChaseMessage,
-    options: { idempotencyKey: string; requestId?: string | undefined },
+    options: {
+      idempotencyKey: string;
+      replyTo?: string | undefined;
+      requestId?: string | undefined;
+    },
   ) {
     if (this.failWith) throw this.failWith;
-    this.sent.push({ to, message, key: options.idempotencyKey, requestId: options.requestId });
+    this.sent.push({
+      to,
+      message,
+      key: options.idempotencyKey,
+      replyTo: options.replyTo,
+      requestId: options.requestId,
+    });
     return { messageId: 'email_123' };
   }
 }
@@ -47,6 +58,7 @@ function build() {
       INTERNAL_API_KEY: KEY,
       EMAIL_SERVICE_URL: 'http://email.test',
       EMAIL_SERVICE_API_KEY: KEY,
+      CHASE_REPLY_ADDRESS: 'reply@linkerclaw.ai',
     }),
     logger: createLogger({ service: 'test', destination: silent }).logger,
     version: 'test',
@@ -76,12 +88,14 @@ describe('POST /v1/chases', () => {
       status: 'sent',
       subject: 'Additional documents required for your HELOC application',
       email_message_id: 'email_123',
+      reply_to: `reply+${payload.chase_id}@linkerclaw.ai`,
     });
     expect(body.body).toContain('- Proof of income');
     expect(email.sent).toEqual([
       expect.objectContaining({
         to: 'john@example.com',
         key: `chase:${payload.chase_id}`,
+        replyTo: `reply+${payload.chase_id}@linkerclaw.ai`,
         requestId: 'req-1',
       }),
     ]);
@@ -101,6 +115,58 @@ describe('POST /v1/chases', () => {
       url: '/v1/chases',
       headers: auth,
       payload: { ...payload, missing_documents: [] },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('POST /v1/outcome-notices', () => {
+  const notice = {
+    notice_id: '33333333-3333-4333-8333-333333333333',
+    lead_id: payload.lead_id,
+    email: 'john@example.com',
+    name: 'John Doe',
+    outcome: {
+      status: 'approved',
+      offer: {
+        lender: 'Figure mock',
+        amount: 250_000,
+        apr_min: 7.5,
+        apr_max: 9.5,
+        term_months: 120,
+        estimated_monthly_payment: 2_968,
+        expires_at: '2026-10-23T00:00:00.000Z',
+      },
+    },
+    result_url: 'https://heloc-demo.vercel.app/result/' + payload.lead_id,
+  };
+
+  it('sends the notice once per notice id, without a reply address', async () => {
+    const res = await build().inject({
+      method: 'POST',
+      url: '/v1/outcome-notices',
+      headers: auth,
+      payload: notice,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(outcomeNoticeResponseSchema.parse(res.json())).toMatchObject({
+      notice_id: notice.notice_id,
+      status: 'sent',
+      subject: 'Your HELOC offer is ready',
+    });
+    expect(email.sent[0]).toMatchObject({
+      to: 'john@example.com',
+      key: `notice:${notice.notice_id}`,
+      replyTo: undefined,
+    });
+  });
+
+  it('rejects an unknown rejection reason', async () => {
+    const res = await build().inject({
+      method: 'POST',
+      url: '/v1/outcome-notices',
+      headers: auth,
+      payload: { ...notice, outcome: { status: 'rejected', reason: 'bad_vibes' } },
     });
     expect(res.statusCode).toBe(400);
   });

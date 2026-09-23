@@ -20,6 +20,23 @@ export const DOCUMENT_TYPES = [
 ] as const;
 export type DocumentType = (typeof DOCUMENT_TYPES)[number];
 
+/** Why Figure declines; published so clients can explain each one. */
+export const REJECTION_REASONS = ['insufficient_home_equity', 'credit_below_minimum'] as const;
+export type RejectionReason = (typeof REJECTION_REASONS)[number];
+
+/**
+ * HELOC product limits Figure (mock) underwrites against. Published so the quiz can
+ * preview available equity with the same numbers the underwriter uses.
+ */
+export const HELOC_LIMITS = {
+  /** First mortgage + line may not exceed this share of the home's value. */
+  maxCombinedLtv: 0.85,
+  /** Smallest line worth offering, USD. */
+  minLine: 25_000,
+  /** Largest line offered, USD. */
+  maxLine: 400_000,
+} as const;
+
 export const softPullRequestSchema = z.object({
   lead_id: z.uuid(),
   property_state: z.enum(US_STATES),
@@ -50,10 +67,32 @@ export type RequiredDocument = z.infer<typeof requiredDocumentSchema>;
 
 export const softPullResponseSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('approved'), offer: offerSchema }),
-  z.object({ status: z.literal('rejected'), reason: z.string() }),
+  z.object({ status: z.literal('rejected'), reason: z.enum(REJECTION_REASONS) }),
   z.object({
     status: z.literal('need-more-documents'),
     documents: z.array(requiredDocumentSchema).min(1),
   }),
 ]);
 export type SoftPullResponse = z.infer<typeof softPullResponseSchema>;
+
+// Document review: after a Need More Documents soft pull, the borrower's documents are
+// submitted and Figure makes its final call (approved or rejected — never more documents).
+
+export const submittedAttachmentSchema = z.object({
+  filename: z.string(),
+  content_type: z.string(),
+  size: z.number().int().nonnegative(),
+});
+export type SubmittedAttachment = z.infer<typeof submittedAttachmentSchema>;
+
+export const documentReviewRequestSchema = softPullRequestSchema.extend({
+  documents: z.array(requiredDocumentSchema).min(1),
+  attachments: z.array(submittedAttachmentSchema).min(1),
+});
+export type DocumentReviewRequest = z.infer<typeof documentReviewRequestSchema>;
+
+export const documentReviewResponseSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('approved'), offer: offerSchema }),
+  z.object({ status: z.literal('rejected'), reason: z.enum(REJECTION_REASONS) }),
+]);
+export type DocumentReviewResponse = z.infer<typeof documentReviewResponseSchema>;

@@ -7,7 +7,12 @@ import {
   type SaveOptions,
 } from '../../domain/lead-repository.ts';
 import { Lead, type LeadSnapshot } from '../../domain/lead.ts';
-import type { LeadEventType, PrequalDecision } from '../../domain/model.ts';
+import type {
+  ChaseReply,
+  LeadEventType,
+  PrequalDecision,
+  ReviewDecision,
+} from '../../domain/model.ts';
 import * as schema from './schema.ts';
 
 /** Works with both postgres-js (production) and PGlite (tests). */
@@ -22,12 +27,15 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
 
   async findById(id: string): Promise<Lead | undefined> {
     if (!isUuid(id)) return undefined;
-    const [[lead], [decision], [chase]] = await Promise.all([
+    const [[lead], figure, [chase], [notice]] = await Promise.all([
       this.#db.select().from(schema.leads).where(eq(schema.leads.id, id)),
       this.#db.select().from(schema.figureDecisions).where(eq(schema.figureDecisions.leadId, id)),
       this.#db.select().from(schema.chases).where(eq(schema.chases.leadId, id)),
+      this.#db.select().from(schema.outcomeNotices).where(eq(schema.outcomeNotices.leadId, id)),
     ]);
     if (!lead) return undefined;
+    const decision = figure.find((f) => f.kind === 'soft_pull');
+    const review = figure.find((f) => f.kind === 'document_review');
 
     const snapshot: LeadSnapshot = {
       id: lead.id,
@@ -40,7 +48,7 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
       },
       creditProfile: { creditBand: lead.creditBand, incomeBand: lead.incomeBand },
       purpose: lead.purpose,
-      decision: decision ? reviveDecision(decision.decision) : undefined,
+      decision: decision ? (reviveOffer(decision.decision) as PrequalDecision) : undefined,
       chase: chase
         ? {
             id: chase.id,
@@ -48,8 +56,22 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
             subject: chase.subject ?? undefined,
             body: chase.body ?? undefined,
             emailMessageId: chase.emailMessageId ?? undefined,
+            replyTo: chase.replyTo ?? undefined,
             sentAt: chase.sentAt ?? undefined,
             lastError: chase.lastError ?? undefined,
+            reply: chase.reply ? reviveReply(chase.reply) : undefined,
+          }
+        : undefined,
+      review: review ? (reviveOffer(review.decision) as ReviewDecision) : undefined,
+      notice: notice
+        ? {
+            id: notice.id,
+            status: notice.status,
+            subject: notice.subject ?? undefined,
+            body: notice.body ?? undefined,
+            emailMessageId: notice.emailMessageId ?? undefined,
+            sentAt: notice.sentAt ?? undefined,
+            lastError: notice.lastError ?? undefined,
           }
         : undefined,
       createdAt: lead.createdAt,
@@ -57,6 +79,15 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
       version: lead.version,
     };
     return Lead.rehydrate(snapshot);
+  }
+
+  async findByChaseId(chaseId: string): Promise<Lead | undefined> {
+    if (!isUuid(chaseId)) return undefined;
+    const [row] = await this.#db
+      .select({ leadId: schema.chases.leadId })
+      .from(schema.chases)
+      .where(eq(schema.chases.id, chaseId));
+    return row && this.findById(row.leadId);
   }
 
   async save(lead: Lead, options: SaveOptions = {}): Promise<void> {
@@ -93,16 +124,25 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
         if (updated.length === 0) throw new ConcurrencyError(s.id);
       }
 
-      if (s.decision) {
+      // Decisions never change: insert once per kind. Only the newly recorded one
+      // actually inserts, so the raw Figure response lands on the right row.
+      const figureRows = [
+        s.decision && { kind: 'soft_pull', outcome: s.decision.outcome, decision: s.decision },
+        s.review && { kind: 'document_review', outcome: s.review.outcome, decision: s.review },
+      ].filter((row) => !!row);
+      for (const row of figureRows) {
         await tx
           .insert(schema.figureDecisions)
           .values({
             leadId: s.id,
-            status: s.decision.outcome,
-            decision: s.decision,
-            rawResponse: options.rawPrequalResponse ?? null,
+            kind: row.kind,
+            status: row.outcome,
+            decision: row.decision,
+            rawResponse: options.rawFigureResponse ?? null,
           })
-          .onConflictDoNothing({ target: schema.figureDecisions.leadId });
+          .onConflictDoNothing({
+            target: [schema.figureDecisions.leadId, schema.figureDecisions.kind],
+          });
       }
 
       if (s.chase) {
@@ -111,13 +151,30 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
           subject: s.chase.subject ?? null,
           body: s.chase.body ?? null,
           emailMessageId: s.chase.emailMessageId ?? null,
+          replyTo: s.chase.replyTo ?? null,
           lastError: s.chase.lastError ?? null,
+          reply: s.chase.reply ?? null,
           sentAt: s.chase.sentAt ?? null,
         };
         await tx
           .insert(schema.chases)
           .values({ ...chase, id: s.chase.id, leadId: s.id })
           .onConflictDoUpdate({ target: schema.chases.id, set: chase });
+      }
+
+      if (s.notice) {
+        const notice = {
+          status: s.notice.status,
+          subject: s.notice.subject ?? null,
+          body: s.notice.body ?? null,
+          emailMessageId: s.notice.emailMessageId ?? null,
+          lastError: s.notice.lastError ?? null,
+          sentAt: s.notice.sentAt ?? null,
+        };
+        await tx
+          .insert(schema.outcomeNotices)
+          .values({ ...notice, id: s.notice.id, leadId: s.id })
+          .onConflictDoUpdate({ target: schema.outcomeNotices.id, set: notice });
       }
 
       if (events.length > 0) {
@@ -152,9 +209,9 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
   }
 }
 
-/** JSONB turns the Offer's Date into a string; restore it. */
-function reviveDecision(stored: unknown): PrequalDecision {
-  const decision = stored as PrequalDecision;
+/** JSONB turns the Offer's Date into a string; restore it (decision or review). */
+function reviveOffer(stored: unknown): PrequalDecision | ReviewDecision {
+  const decision = stored as PrequalDecision | ReviewDecision;
   if (decision.outcome === 'approved') {
     return {
       ...decision,
@@ -162,6 +219,11 @@ function reviveDecision(stored: unknown): PrequalDecision {
     };
   }
   return decision;
+}
+
+function reviveReply(stored: unknown): ChaseReply {
+  const reply = stored as ChaseReply;
+  return { ...reply, receivedAt: new Date(reply.receivedAt) };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

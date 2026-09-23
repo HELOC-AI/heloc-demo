@@ -1,9 +1,9 @@
 'use client';
 
 import type { LeadResult } from '@heloc/contracts';
-import { useState } from 'react';
 import { formatDateTime, formatTime } from '@/lib/format';
-import { EVENT_LABELS, eventDetail, STATUS_LABELS } from '@/lib/labels';
+import { EVENT_LABELS, eventDetail, isProblemEvent, STATUS_LABELS } from '@/lib/labels';
+import { CopyButton } from './copy-button';
 
 /** The Lead id (for support and Replay) and its Lead Events, oldest first. */
 export function ApplicationDetails({ lead }: { lead: LeadResult }) {
@@ -41,7 +41,7 @@ export function ApplicationDetails({ lead }: { lead: LeadResult }) {
             {events.map((event, i) => {
               const detail = eventDetail(event);
               const last = i === events.length - 1;
-              const bad = event.type === 'lead.failed' || event.type === 'email.failed';
+              const bad = isProblemEvent(event.type);
               return (
                 <li
                   key={`${event.type}-${event.created_at}-${i}`}
@@ -85,33 +85,11 @@ export function ApplicationDetails({ lead }: { lead: LeadResult }) {
 }
 
 function LeadId({ id }: { id: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(id);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard can be unavailable (permissions, insecure context); the id stays selectable.
-    }
-  }
-
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-medium text-slate-500">Application ID</h2>
-        <button
-          type="button"
-          onClick={copy}
-          className="rounded-md px-1.5 py-0.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-600/20"
-          aria-label={copied ? 'Application ID copied' : 'Copy application ID'}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-        <span className="sr-only" aria-live="polite">
-          {copied ? 'Copied to clipboard' : ''}
-        </span>
+        <CopyButton value={id} label="application ID" />
       </div>
       <code className="mt-0.5 block font-mono text-xs break-all text-slate-900 select-all sm:text-sm">
         {id}

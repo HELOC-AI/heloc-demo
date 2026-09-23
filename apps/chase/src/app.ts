@@ -6,7 +6,12 @@ import {
   createServiceClient,
   type ErrorReporter,
 } from '@heloc/server-kit';
-import { createSendChase, type Composer, type EmailGateway } from './application/send-chase.ts';
+import {
+  createSendChase,
+  createSendOutcomeNotice,
+  type Composer,
+  type EmailGateway,
+} from './application/send-chase.ts';
 import { EmailHttpGateway } from './infrastructure/email-gateway.ts';
 import { TemplateComposer } from './infrastructure/template-composer.ts';
 import { chaseRoutes } from './interface/http/chase-routes.ts';
@@ -26,7 +31,7 @@ export interface AppDeps {
 
 /** Composition root. */
 export function buildApp({ config, logger, version, errorReporter, composer, email }: AppDeps) {
-  const sendChase = createSendChase({
+  const deps = {
     composer: composer ?? new TemplateComposer(),
     email:
       email ??
@@ -38,13 +43,15 @@ export function buildApp({ config, logger, version, errorReporter, composer, ema
           timeoutMs: EMAIL_TIMEOUT_MS,
         }),
       ),
-  });
+  };
+  const sendChase = createSendChase({ ...deps, replyAddress: config.CHASE_REPLY_ADDRESS });
+  const sendOutcomeNotice = createSendOutcomeNotice(deps);
 
   const app = createServer({ service: SERVICE, version, logger, errorReporter });
   app.register(
     async (v1) => {
       v1.addHook('onRequest', bearerAuth(config.INTERNAL_API_KEY));
-      chaseRoutes(v1, { sendChase });
+      chaseRoutes(v1, { sendChase, sendOutcomeNotice });
     },
     { prefix: '/v1' },
   );

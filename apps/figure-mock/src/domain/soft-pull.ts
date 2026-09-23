@@ -64,3 +64,8 @@ export type Outcome =
   | { status: 'need-more-documents'; documents: RequiredDocument[] };
 
 export type OutcomeStatus = Outcome['status'];
+
+/** Final call on submitted documents: never asks for more. */
+export type ReviewOutcome =
+  { status: 'approved'; offer: Offer } | { status: 'rejected'; reason: RejectionReason };
+export type ReviewOutcomeStatus = ReviewOutcome['status'];

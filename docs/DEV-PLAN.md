@@ -315,6 +315,29 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ---
 
+## 5.5 追加：借款人邮件回复补材料（ADR-0004）
+
+```text
+Chase 邮件（Reply-To: reply+<chase_id>@linkerclaw.ai）
+   │ 借款人回复并附上材料
+   ▼
+Cloudflare Email Routing（MX，SPF/DKIM/DMARC 校验）── reply@ 规则 ──► Email Worker `heloc-email-inbound`（apps/email-inbound）
+   │ 取 Cloudflare 自己加的 Authentication-Results（最上面那条），解析附件元数据（内容不外传）
+   ▼ POST /v1/inbound-emails（INBOUND_API_KEY）
+intake：Lead.receiveReply —— 只接受 dmarc=pass、发件人=借款人、至少一个附件；同一封重投递幂等
+   │ 202 立即返回；后台 continueLead
+   ▼
+figure-mock POST /v1/document-reviews → approved / rejected（只剩硬性限制）
+   ▼
+chase POST /v1/outcome-notices → email → Resend → 借款人收到结果邮件（含结果页链接）
+```
+
+- 新状态 `documents_received`；`nextStep()` 增加 `review`、`notify`，Replay 同样覆盖；每个 Lead 至多一次 Document Review、一封 Outcome Notice（DB 唯一约束兜底）
+- 被拒绝的回复记 `documents.rejected`（原因见 contracts `REPLY_REJECTIONS`），不改变 Lead
+- Worker 对 intake 的 5xx / 401 / 403 / 404 / 超时抛错 → 发件服务器稍后重投（我们配置错误时回复不会丢）；400/422 视为永久
+- Apple Mail 会把 PDF 作为 inline 附件发送：只跳过嵌在 HTML 里的图片（multipart/related）
+- **手工演示注意**：回复邮件的发件人必须等于问卷里填的邮箱。用 Gmail 回复时，问卷里就填 Gmail 地址；`user@linkerclaw.ai` 只能收（转发到 Gmail），从 Gmail 回复会因发件人不符被拒
+
 ## 6. 风险与预案
 
 | 风险                                         | 预案                                                                    |

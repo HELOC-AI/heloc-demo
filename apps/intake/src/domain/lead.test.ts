@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Lead, type SubmitLeadInput } from './lead.ts';
-import { DomainError, type PrequalDecision } from './model.ts';
+import {
+  DomainError,
+  type IncomingReply,
+  type PrequalDecision,
+  type ReviewDecision,
+} from './model.ts';
 
 const t0 = new Date('2026-09-23T00:00:00Z');
 const input = (overrides: Partial<SubmitLeadInput> = {}): SubmitLeadInput => ({
@@ -33,6 +38,7 @@ const delivery = {
   subject: 'Additional documents required for your HELOC application',
   body: 'Hi John…',
   emailMessageId: 'email_123',
+  replyTo: 'reply+c1@linkerclaw.ai',
   sentAt: t0,
 };
 
@@ -210,5 +216,150 @@ describe('persistence support', () => {
     lead.markPersisted();
     expect(lead.version).toBe(1);
     expect(lead.pendingEvents()).toEqual([]);
+  });
+});
+
+describe('chase reply → document review → outcome notice', () => {
+  const reply = (overrides: Partial<IncomingReply> = {}): IncomingReply => ({
+    messageId: '<m1@mail.example.com>',
+    receivedAt: t0,
+    from: 'John@Example.com',
+    dmarc: 'pass',
+    attachments: [
+      {
+        filename: 'paystub.pdf',
+        contentType: 'application/pdf',
+        size: 1234,
+        sha256: 'a'.repeat(64),
+      },
+    ],
+    ...overrides,
+  });
+  const reviewApproved: ReviewDecision = { outcome: 'approved', offer: approved.offer };
+  const noticeDelivery = {
+    subject: 'Your HELOC offer is ready',
+    body: 'Hi John',
+    emailMessageId: 'email_9',
+    sentAt: t0,
+  };
+
+  function chased() {
+    const lead = decided(needDocs);
+    lead.openChase('c1', t0);
+    lead.markChaseSent(delivery, t0);
+    return lead;
+  }
+
+  it('waits for the borrower once the Chase is sent', () => {
+    expect(chased().nextStep()).toBe('done');
+  });
+
+  it('accepts an authenticated reply from the borrower with documents', () => {
+    const lead = chased();
+    expect(lead.receiveReply(reply(), t0)).toEqual({ accepted: true, duplicate: false });
+    expect(lead.status).toBe('documents_received');
+    expect(lead.chase?.reply?.attachments).toHaveLength(1);
+    expect(lead.nextStep()).toBe('review');
+    expect(lead.pendingEvents().at(-1)).toMatchObject({
+      type: 'documents.received',
+      payload: { chase_id: 'c1', attachments: 1, content_types: ['application/pdf'] },
+    });
+  });
+
+  it.each([
+    [{ dmarc: 'fail' as const }, 'not_authenticated'],
+    [{ dmarc: 'unknown' as const }, 'not_authenticated'],
+    [{ from: 'attacker@example.com' }, 'sender_mismatch'],
+    [{ attachments: [] }, 'no_attachments'],
+  ])('refuses %o (%s) without changing state', (overrides, reason) => {
+    const lead = chased();
+    expect(lead.receiveReply(reply(overrides), t0)).toEqual({ accepted: false, reason });
+    expect(lead.status).toBe('chase_sent');
+    expect(lead.nextStep()).toBe('done');
+    const event = lead.pendingEvents().at(-1);
+    expect(event).toMatchObject({ type: 'documents.rejected', payload: { reason } });
+    expect(JSON.stringify(event)).not.toContain('attacker@example.com');
+  });
+
+  it('refuses a reply before the Chase was sent', () => {
+    expect(decided(needDocs).receiveReply(reply(), t0)).toEqual({
+      accepted: false,
+      reason: 'chase_not_sent',
+    });
+  });
+
+  it('treats a redelivery of the accepted email as a no-op, and refuses a second reply', () => {
+    const lead = chased();
+    lead.receiveReply(reply(), t0);
+    const events = lead.pendingEvents().length;
+    expect(lead.receiveReply(reply(), t0)).toEqual({ accepted: true, duplicate: true });
+    expect(lead.pendingEvents()).toHaveLength(events);
+    expect(lead.receiveReply(reply({ messageId: '<m2@x>' }), t0)).toEqual({
+      accepted: false,
+      reason: 'already_received',
+    });
+  });
+
+  it('runs one Document Review, then one Outcome Notice', () => {
+    const lead = chased();
+    lead.receiveReply(reply(), t0);
+    lead.startReview(t0);
+    lead.recordReview(reviewApproved, t0);
+    expect(lead.status).toBe('approved');
+    expect(lead.nextStep()).toBe('notify');
+    expectDomainError(() => lead.recordReview(reviewApproved, t0), 'review_not_due');
+
+    lead.openNotice('n1', t0);
+    lead.markNoticeSent(noticeDelivery, t0);
+    expect(lead.status).toBe('approved');
+    expect(lead.nextStep()).toBe('done');
+    expect(types(lead).slice(-6)).toEqual([
+      'email.sent',
+      'documents.received',
+      'figure.review_requested',
+      'figure.review_approved',
+      'notice.created',
+      'notice.sent',
+    ]);
+  });
+
+  it('a rejected review is notified too', () => {
+    const lead = chased();
+    lead.receiveReply(reply(), t0);
+    lead.startReview(t0);
+    lead.recordReview({ outcome: 'rejected', reason: 'credit_below_minimum' }, t0);
+    expect(lead.status).toBe('rejected');
+    expect(lead.nextStep()).toBe('notify');
+  });
+
+  it('review cannot start without documents', () => {
+    expectDomainError(() => chased().startReview(t0), 'review_not_due');
+  });
+
+  it('a failed review resumes at review; a failed notice resumes at notify and restores the outcome', () => {
+    const lead = chased();
+    lead.receiveReply(reply(), t0);
+    lead.startReview(t0);
+    lead.fail('review', 'figure down', t0);
+    expect(lead.status).toBe('failed');
+    expect(lead.nextStep()).toBe('review');
+
+    lead.startReview(t0);
+    expect(lead.status).toBe('documents_received');
+    lead.recordReview(reviewApproved, t0);
+    lead.openNotice('n1', t0);
+    lead.markNoticeFailed('email down', t0);
+    expect(lead.status).toBe('failed');
+    expect(lead.nextStep()).toBe('notify');
+    expect(lead.notice).toMatchObject({ status: 'failed', lastError: 'email down' });
+
+    lead.markNoticeSent(noticeDelivery, t0);
+    expect(lead.status).toBe('approved');
+    expect(lead.notice?.lastError).toBeUndefined();
+  });
+
+  it('a soft-pull approval never needs a notice', () => {
+    expect(decided(approved).nextStep()).toBe('done');
+    expectDomainError(() => decided(approved).openNotice('n1', t0), 'notice_not_due');
   });
 });

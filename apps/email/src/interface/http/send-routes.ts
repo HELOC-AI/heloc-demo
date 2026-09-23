@@ -13,7 +13,16 @@ export function sendRoutes(app: FastifyInstance, { sendEmail }: { sendEmail: Sen
     const key = parseInput(idempotencyKey, request.headers[HEADERS.idempotencyKey]);
 
     try {
-      const receipt = await sendEmail(body, { idempotencyKey: key });
+      const receipt = await sendEmail(
+        {
+          to: body.to,
+          subject: body.subject,
+          text: body.text,
+          html: body.html,
+          replyTo: body.reply_to,
+        },
+        { idempotencyKey: key },
+      );
       request.log.info(
         { event: 'email.accepted', message_id: receipt.messageId, idempotency_key: key },
         'email accepted by provider',
