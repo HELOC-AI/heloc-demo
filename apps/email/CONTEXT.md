@@ -19,3 +19,11 @@ _Avoid_: Vendor、Mailer、SMTP
 **Sender**:
 所有 Outbound Email 统一使用的发件人地址，必须属于已验证的发信域名。
 _Avoid_: From address
+
+**Inbound Email**:
+寄到我们域名、由收信适配器（Cloudflare Email Worker）上报的一封邮件：发件人、收件地址、主题、认证结论和附件元数据；附件内容不离开适配器。
+_Avoid_: Received message、Webhook
+
+**Authentication Verdict**:
+收信服务器（Cloudflare）自己算出的 SPF/DKIM/DMARC 结论；发件人无法伪造，用来判断邮件是否真的来自 From 地址。
+_Avoid_: Auth header

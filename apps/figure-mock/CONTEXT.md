@@ -31,3 +31,7 @@ _Avoid_: Override、Test mode
 **Injected Fault**:
 演示故障时由调用方指定的异常行为：超时或服务端错误。
 _Avoid_: Chaos、Error mode
+
+**Document Review**:
+对 `need-more-documents` 之后借款人提交的材料做的最终审核，结论只有 `approved` 或 `rejected`。
+_Avoid_: Second soft pull

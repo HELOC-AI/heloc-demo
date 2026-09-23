@@ -36,7 +36,7 @@ _Avoid_: Use case、Reason
 _Avoid_: Soft pull（那是 Figure 的说法）、Underwriting、Approval
 
 **Prequal Decision**:
-Prequalification 的结果，恰好是 Approved、Rejected、Need More Documents 三者之一。一旦获得就不再改变。
+Prequalification 的结果，恰好是 Approved、Rejected、Need More Documents 三者之一。一旦获得就不再改变；Need More Documents 之后由 Document Review 给出最终结论。
 _Avoid_: Figure decision、Response、Result
 
 **Approved**:
@@ -58,6 +58,20 @@ _Avoid_: Quote、Proposal
 Figure 要求补充的一类材料及其原因，如收入证明、因为收入需要核实。
 _Avoid_: Required document、Doc request
 
+### 补材料之后
+
+**Chase Reply**:
+借款人回复 Chase、带着材料寄到该 Chase 回复地址的邮件。只有经收信服务器认证（DMARC pass）、发件人就是该 Borrower、且至少带一个附件时才被接受；被接受的 Chase Reply 每个 Lead 至多一封。
+_Avoid_: Response、Inbound email、Upload
+
+**Document Review**:
+Figure 对借款人提交材料的最终审核，把 Need More Documents 落定为 Approved 或 Rejected。每个 Lead 至多一次，结论不再改变。
+_Avoid_: Re-underwriting、Second pull、Re-check
+
+**Outcome Notice**:
+Document Review 出结论后，告诉借款人结果的一封邮件。每个 Lead 至多一封。
+_Avoid_: Result email、Notification
+
 ### 跟进与运维
 
 **Chase**:
@@ -73,5 +87,5 @@ Lead 上已经发生的一件事的不可变记录，如 lead.created、figure.n
 _Avoid_: Log、Audit entry、History
 
 **Replay**:
-从上次停下的地方继续推进一个 Lead：缺预审就做预审，缺 Chase 就发 Chase，都已完成则什么都不做。Replay 从不重做已经完成的步骤。
+从上次停下的地方继续推进一个 Lead：缺预审就做预审，缺 Chase 就发 Chase，收到材料未审就做 Document Review，审完未通知就发 Outcome Notice，都已完成则什么都不做。Replay 从不重做已经完成的步骤。
 _Avoid_: Retry、Resubmit、Rerun
