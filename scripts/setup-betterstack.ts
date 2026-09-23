@@ -98,8 +98,10 @@ for (const service of SERVICES) {
         })) as { data: Resource }
       ).data,
   );
+  // An Errors app correlated with a log source ingests through that source: the DSN takes
+  // the source's host *and token*. The application's own token is rejected (HTTP 401).
   updates[`${prefix}BETTERSTACK_ERRORS_DSN`] =
-    `https://${String(app.attributes.token)}@${String(app.attributes.ingesting_host)}/${app.id}`;
+    `https://${String(source.attributes.token)}@${String(source.attributes.ingesting_host)}/${app.id}`;
 
   if (process.argv.includes('--monitors')) {
     const publicUrl = env[`${prefix}PUBLIC_URL`];
