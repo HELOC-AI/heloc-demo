@@ -23,6 +23,7 @@ import { ChaseHttpGateway, OutcomeNoticeHttpGateway } from './infrastructure/htt
 import { FigureHttpGateway } from './infrastructure/http/figure-gateway.ts';
 import { inboundRoutes } from './interface/http/inbound-routes.ts';
 import { leadRoutes } from './interface/http/lead-routes.ts';
+import { opsRoutes } from './interface/http/ops-routes.ts';
 
 export const SERVICE = 'intake';
 
@@ -100,6 +101,15 @@ export function buildApp(deps: AppDeps) {
 
   app.register(
     async (v1) => leadRoutes(v1, { useCases, allowMockOverride: config.ALLOW_MOCK_OVERRIDE }),
+    { prefix: '/v1' },
+  );
+
+  // Operator reads: the /ops page server and scripts/ops.ts.
+  app.register(
+    async (ops) => {
+      ops.addHook('onRequest', bearerAuth(config.OPS_API_KEY));
+      opsRoutes(ops, { useCases });
+    },
     { prefix: '/v1' },
   );
 

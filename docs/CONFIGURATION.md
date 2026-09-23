@@ -28,13 +28,13 @@
 | `<SERVICE>__NAME`       | 只属于某个服务，同步时去掉前缀                     | `INTAKE__BETTERSTACK_SOURCE_TOKEN` → intake 的 `BETTERSTACK_SOURCE_TOKEN` |
 | `<SERVICE>__PUBLIC_URL` | 该服务的公网地址（非 secret），供脚本使用          | `WEB__PUBLIC_URL`                                                         |
 
-**管理员凭据只留在根 `.env`，永不同步到任何服务**：`BETTER_STACK_API_KEY`（能改整个 Better Stack 账号）、`RESEND_ADMIN_API_KEY`（Full access，只用于添加/验证域名，用完可在 Resend 删除）、`SUPABASE_SECRET_KEY`（本项目不使用）、`BETTERSTACK_QUERY_*`（SQL 查询连接，24 小时过期，只用于核验日志）、`SUPABASE_PASSWORD`（只用来拼 `DATABASE_URL`）。
+**管理员凭据只留在根 `.env`，永不同步到任何服务**：`BETTER_STACK_API_KEY`（能改整个 Better Stack 账号）、`RESEND_ADMIN_API_KEY`（Full access，只用于添加/验证域名，用完可在 Resend 删除）、`SUPABASE_SECRET_KEY`（本项目不使用）、`BETTERSTACK_QUERY_*`（只读 SQL 查询连接，供 `pnpm ops` 与 `setup-dashboards.ts --verify`）、`SUPABASE_PASSWORD`（只用来拼 `DATABASE_URL`）。
 
 自动写入根 `.env` 的脚本（幂等，只打印 id / host，不打印 token）：
 
 - `node scripts/setup-betterstack.ts [--monitors]`：建 log source、errors app（加 `--monitors` 再建 uptime monitor），写回 `<SERVICE>__BETTERSTACK_*`
 - `node scripts/setup-resend-domain.ts [--wait]`：在 Resend 添加 `RESEND_DOMAIN`，把 DKIM / SPF / bounce MX + DMARC 记录写入 Cloudflare（通过已登录的 `cf` CLI，DNS only），触发验证，写回 `EMAIL_FROM`
-- `node scripts/env-sync.ts --railway`：把每个 service 自己的 secret 推到 Railway（stdin 传值，不进命令行历史）；`--local`：生成本地 `apps/*/.env`（本地不向生产 Better Stack 发日志，email 默认 `EMAIL_PROVIDER=console`）
+- `node scripts/env-sync.ts --railway`：把每个 service 自己的 secret 推到 Railway（stdin 传值，不进命令行历史）；`--vercel`：把 web 的服务端 secret（`/ops` 页面用）推到 Vercel production；`--local`：生成本地 `apps/*/.env`（本地不向生产 Better Stack 发日志，email 默认 `EMAIL_PROVIDER=console`）
 
 ---
 
@@ -44,17 +44,18 @@
 
 ### 2.1 intake-service（Railway）
 
-| 变量                                                      | 类型  | 用途                                     | 来源 / 取值                                                                         |
-| --------------------------------------------------------- | ----- | ---------------------------------------- | ----------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                            | 🔒    | Drizzle 连接 Supabase Postgres           | Supabase → Connect → **Session pooler**（`...pooler.supabase.com:5432`，IPv4 兼容） |
-| `FIGURE_API_URL`                                          | 📄    | Mock Figure 地址                         | `https://${{figure-mock.RAILWAY_PUBLIC_DOMAIN}}`（Railway 引用变量）                |
-| `FIGURE_API_KEY`                                          | 🔒    | 调 figure-mock 的内部 key                | `${{figure-mock.INTERNAL_API_KEY}}`                                                 |
-| `CHASE_API_URL`                                           | 📄    | Chase Service 地址                       | `https://${{chase.RAILWAY_PUBLIC_DOMAIN}}`                                          |
-| `CHASE_API_KEY`                                           | 🔒    | 调 chase 的内部 key                      | `${{chase.INTERNAL_API_KEY}}`                                                       |
-| `CORS_ORIGINS`                                            | 📄    | 允许的前端 Origin（逗号分隔）            | `https://heloc-demo.vercel.app`                                                     |
-| `ALLOW_MOCK_OVERRIDE`                                     | 📄    | 是否透传 `X-Mock-Outcome` 给 figure-mock | Demo 环境 `true`                                                                    |
-| `BETTERSTACK_SOURCE_TOKEN` / `BETTERSTACK_INGESTING_HOST` | 🔒/📄 | 日志投递                                 | Better Stack → Telemetry → Sources（每个 service 一个 source）                      |
-| `BETTERSTACK_ERRORS_DSN`                                  | 🔒    | 异常上报（Sentry SDK 兼容）              | Better Stack → Errors → Application（每个 service 一个）                            |
+| 变量                                                      | 类型  | 用途                                                  | 来源 / 取值                                                                         |
+| --------------------------------------------------------- | ----- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                            | 🔒    | Drizzle 连接 Supabase Postgres                        | Supabase → Connect → **Session pooler**（`...pooler.supabase.com:5432`，IPv4 兼容） |
+| `FIGURE_API_URL`                                          | 📄    | Mock Figure 地址                                      | `https://${{figure-mock.RAILWAY_PUBLIC_DOMAIN}}`（Railway 引用变量）                |
+| `FIGURE_API_KEY`                                          | 🔒    | 调 figure-mock 的内部 key                             | `${{figure-mock.INTERNAL_API_KEY}}`                                                 |
+| `CHASE_API_URL`                                           | 📄    | Chase Service 地址                                    | `https://${{chase.RAILWAY_PUBLIC_DOMAIN}}`                                          |
+| `CHASE_API_KEY`                                           | 🔒    | 调 chase 的内部 key                                   | `${{chase.INTERNAL_API_KEY}}`                                                       |
+| `CORS_ORIGINS`                                            | 📄    | 允许的前端 Origin（逗号分隔）                         | `https://heloc-demo.vercel.app`                                                     |
+| `ALLOW_MOCK_OVERRIDE`                                     | 📄    | 是否透传 `X-Mock-Outcome` 给 figure-mock              | Demo 环境 `true`                                                                    |
+| `BETTERSTACK_SOURCE_TOKEN` / `BETTERSTACK_INGESTING_HOST` | 🔒/📄 | 日志投递                                              | Better Stack → Telemetry → Sources（每个 service 一个 source）                      |
+| `BETTERSTACK_ERRORS_DSN`                                  | 🔒    | 异常上报（Sentry SDK 兼容）                           | Better Stack → Errors → Application（每个 service 一个）                            |
+| `OPS_API_KEY`                                             | 🔒    | 运维读接口 `GET /v1/ops/*`（`/ops` 页面、`pnpm ops`） | `openssl rand -hex 32`，根 `.env` 的 `INTAKE__OPS_API_KEY`；web 服务端持有同一个值  |
 
 > 与原需求文档差异：文档写的是 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`，但我们用 **Drizzle 直连 Postgres**，只需要 `DATABASE_URL`。
 > Service role key 会绕过 RLS、权限远大于需要，**不生成、不存放**。Supabase 的 anon key 同样不使用。
@@ -91,7 +92,11 @@
 | --------------------- | ---- | --------------- | -------------------------- |
 | `NEXT_PUBLIC_API_URL` | 📄   | Intake 公网地址 | intake 的 Railway 公网域名 |
 
-> `NEXT_PUBLIC_*` 会在 **build 时内联进前端 bundle**，只能放公开值。前端没有任何 secret。
+| `OPS_API_KEY` | 🔒 服务端 | `/ops` 调 intake `GET /v1/ops/*` | = 根 `.env` 的 `INTAKE__OPS_API_KEY` |
+| `BETTERSTACK_QUERY_HOST/USERNAME/PASSWORD` | 🔒 服务端 | `/ops` 查 Better Stack（只读 SQL） | 根 `.env` 的 `WEB__BETTERSTACK_QUERY_*`：一条专用的、不过期的只读连接（Better Stack → Integrations → Connect ClickHouse HTTP client），与本机 `pnpm ops` 用的那条分开，可单独吊销 |
+
+> `NEXT_PUBLIC_*` 会在 **build 时内联进前端 bundle**，只能放公开值；浏览器里没有任何 secret。上面几项只在服务端组件里读取（`apps/web/src/lib/ops-config.ts`），由 `node scripts/env-sync.ts --vercel` 以 Sensitive 类型写入 Vercel production。
+> Better Stack 管理 token（`BETTER_STACK_API_KEY`）**不上 Vercel**：`/ops` 只需要只读查询，事故列表与确认 / 关闭只在本机 `pnpm ops` 里做。
 
 ### 2.6 GitHub（仅 heloc-demo）
 
@@ -144,6 +149,7 @@ web ──(无鉴权, CORS 白名单)──► intake ──K_fig──► figur
 
 - 每个被调用方只认自己的 `INTERNAL_API_KEY`；调用方用 `<TARGET>_API_KEY` 保存对应值。
 - 三把 key 互不相同 → 任一泄露只影响一跳。
+- 运维读接口另用一把 `OPS_API_KEY`（web 服务端 / `pnpm ops` → intake `GET /v1/ops/*`），与借款人 API、收信 Worker 的 key 互不通用。
 - 请求头：`Authorization: Bearer <key>`；校验用 `crypto.timingSafeEqual`。`/health` 不鉴权。
 - **Railway 引用变量**让调用方直接引用被调用方的 key 和域名：在 `.railway/railway.ts` 里写作 `chase.env.INTERNAL_API_KEY`（类型化引用）或 `https://${{chase.RAILWAY_PUBLIC_DOMAIN}}`。值只维护一处，轮换时只改被调用方，调用方重新部署即拿到新值。
 

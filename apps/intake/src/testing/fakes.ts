@@ -53,6 +53,19 @@ export class InMemoryLeads implements LeadRepository, LeadTimeline {
     lead.markPersisted();
   }
 
+  async needingAttention(stuckBefore: Date, limit: number) {
+    return [...this.snapshots.values()]
+      .filter(
+        (s) =>
+          s.status === 'failed' ||
+          (['submitted', 'processing', 'documents_received'].includes(s.status) &&
+            s.updatedAt < stuckBefore),
+      )
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      .slice(0, limit)
+      .map((s) => s.id);
+  }
+
   async eventsFor(leadId: string) {
     return this.events.filter((e) => e.leadId === leadId);
   }

@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, or } from 'drizzle-orm';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { LeadTimeline, RecordedLeadEvent } from '../../application/ports.ts';
 import {
@@ -190,6 +190,24 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
     });
 
     lead.markPersisted();
+  }
+
+  async needingAttention(stuckBefore: Date, limit: number): Promise<string[]> {
+    const rows = await this.#db
+      .select({ id: schema.leads.id })
+      .from(schema.leads)
+      .where(
+        or(
+          eq(schema.leads.status, 'failed'),
+          and(
+            inArray(schema.leads.status, ['submitted', 'processing', 'documents_received']),
+            lt(schema.leads.updatedAt, stuckBefore),
+          ),
+        ),
+      )
+      .orderBy(desc(schema.leads.updatedAt))
+      .limit(limit);
+    return rows.map((r) => r.id);
   }
 
   async eventsFor(leadId: string): Promise<RecordedLeadEvent[]> {

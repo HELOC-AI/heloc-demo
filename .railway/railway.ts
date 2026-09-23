@@ -96,6 +96,8 @@ export default defineRailway(() => {
       WEB_APP_URL: WEB_ORIGIN,
       // Held by the Cloudflare Email Worker (apps/email-inbound) to post Chase Replies.
       INBOUND_API_KEY: preserve(),
+      // Held by the /ops page server (Vercel) and scripts/ops.ts for GET /v1/ops/*.
+      OPS_API_KEY: preserve(),
     },
   });
 

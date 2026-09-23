@@ -322,3 +322,23 @@ describe('chase reply → document review → outcome notice', () => {
     expect(notices.delivered.size).toBe(1);
   });
 });
+
+describe('leadsNeedingAttention', () => {
+  it('lists failed Leads and Leads stuck mid-pipeline, not healthy ones', async () => {
+    setup(new Error('down'));
+    const failed = await submit();
+    prequal.next = approved;
+    await submit();
+    // A Lead stuck in `processing` for longer than the threshold (e.g. a crash mid-call).
+    const stuck = await submit();
+    const snapshot = leads.snapshots.get(stuck.id)!;
+    leads.snapshots.set(stuck.id, {
+      ...snapshot,
+      status: 'processing',
+      updatedAt: new Date('2026-09-22T23:00:00Z'),
+    });
+
+    const views = await useCases.leadsNeedingAttention();
+    expect(views.map((v) => v.lead.id).sort()).toEqual([failed.id, stuck.id].sort());
+  });
+});

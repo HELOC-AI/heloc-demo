@@ -23,6 +23,9 @@ importers:
       '@heloc/logger':
         specifier: workspace:*
         version: link:packages/logger
+      '@heloc/ops':
+        specifier: workspace:*
+        version: link:packages/ops
       '@types/node':
         specifier: ^24.13.6
         version: 24.13.6
@@ -181,6 +184,9 @@ importers:
       '@heloc/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@heloc/ops':
+        specifier: workspace:*
+        version: link:../../packages/ops
       next:
         specifier: ^16.3.6
         version: 16.3.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@types/node@24.13.6)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -227,6 +233,15 @@ importers:
       pino-pretty:
         specifier: ^13.1.3
         version: 13.1.3
+
+  packages/ops:
+    dependencies:
+      '@heloc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
   packages/server-kit:
     dependencies:

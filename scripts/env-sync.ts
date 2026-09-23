@@ -2,6 +2,7 @@
  * Distributes secrets from the repo-root .env (the local master copy) to where they run.
  *
  *   node scripts/env-sync.ts --railway   push each service's secrets to Railway (stdin, never argv)
+ *   node scripts/env-sync.ts --vercel    push web's server-only secrets (the /ops page) to Vercel
  *   node scripts/env-sync.ts --local     write apps/<app>/.env for local development
  *
  * Only secrets travel through here. Non-secret config and cross-service wiring
@@ -36,6 +37,29 @@ function secretsFor(service: Service): Record<string, string> {
   }
   for (const key of SHARED_SECRETS[service]) secrets[key] = requireVar(env, key);
   return secrets;
+}
+
+/** web's server-only secrets, read by the /ops page server; never NEXT_PUBLIC_*. */
+function webSecrets(): Record<string, string> {
+  return {
+    OPS_API_KEY: requireVar(env, 'INTAKE__OPS_API_KEY'),
+    BETTERSTACK_QUERY_HOST: requireVar(env, 'WEB__BETTERSTACK_QUERY_HOST'),
+    BETTERSTACK_QUERY_USERNAME: requireVar(env, 'WEB__BETTERSTACK_QUERY_USERNAME'),
+    BETTERSTACK_QUERY_PASSWORD: requireVar(env, 'WEB__BETTERSTACK_QUERY_PASSWORD'),
+  };
+}
+
+function pushToVercel() {
+  for (const [key, value] of Object.entries(webSecrets())) {
+    execFileSync(
+      'vercel',
+      ['env', 'add', key, 'production', '--project', 'heloc-demo', '--sensitive', '--force'],
+      // The CLI chats on stderr; it is attached to the error if the command fails.
+      { input: value, stdio: ['pipe', 'ignore', 'pipe'] },
+    );
+    console.log(`vercel web (production): ${key} set`);
+  }
+  console.log('Takes effect on the next production deployment.');
 }
 
 function pushToRailway() {
@@ -93,7 +117,7 @@ function writeLocal() {
       EMAIL_PROVIDER: 'console',
       EMAIL_FROM: key('EMAIL_FROM'),
     },
-    web: { NEXT_PUBLIC_API_URL: 'http://localhost:4000' },
+    web: { NEXT_PUBLIC_API_URL: 'http://localhost:4000', ...webSecrets() },
   };
 
   for (const [app, values] of Object.entries(files)) {
@@ -110,8 +134,9 @@ function writeLocal() {
 }
 
 if (process.argv.includes('--railway')) pushToRailway();
+else if (process.argv.includes('--vercel')) pushToVercel();
 else if (process.argv.includes('--local')) writeLocal();
 else {
-  console.error('usage: node scripts/env-sync.ts --railway | --local');
+  console.error('usage: node scripts/env-sync.ts --railway | --vercel | --local');
   process.exit(1);
 }

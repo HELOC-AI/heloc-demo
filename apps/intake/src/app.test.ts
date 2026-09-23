@@ -1,7 +1,11 @@
 import { Writable } from 'node:stream';
 import { PGlite } from '@electric-sql/pglite';
 import { intakeEnv, loadConfig } from '@heloc/config';
-import { inboundEmailResponseSchema, leadResultSchema } from '@heloc/contracts';
+import {
+  inboundEmailResponseSchema,
+  leadResultSchema,
+  opsLeadsResponseSchema,
+} from '@heloc/contracts';
 import { createLogger } from '@heloc/logger';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -19,6 +23,7 @@ const silent = new Writable({ write: (_c, _e, cb) => cb() });
 const key = 'k'.repeat(64);
 const WEB = 'https://heloc-demo.vercel.app';
 const INBOUND_KEY = 'i'.repeat(64);
+const OPS_KEY = 'o'.repeat(64);
 
 const approved: PrequalDecision = {
   outcome: 'approved',
@@ -72,6 +77,7 @@ async function build({ allowMockOverride = true } = {}) {
       ALLOW_MOCK_OVERRIDE: String(allowMockOverride),
       WEB_APP_URL: WEB,
       INBOUND_API_KEY: INBOUND_KEY,
+      OPS_API_KEY: OPS_KEY,
     }),
     logger: createLogger({ service: 'test', destination: silent }).logger,
     version: 'test',
@@ -389,5 +395,38 @@ describe('POST /v1/inbound-emails', () => {
       failed_step: 'notify',
       error: 'chase: HTTP 502',
     });
+  });
+});
+
+describe('GET /v1/ops/leads', () => {
+  const get = (key = OPS_KEY) =>
+    app.inject({
+      method: 'GET',
+      url: '/v1/ops/leads',
+      headers: { authorization: `Bearer ${key}` },
+    });
+
+  it('requires the ops key (not another hop key)', async () => {
+    await build();
+    expect((await get(INBOUND_KEY)).statusCode).toBe(401);
+  });
+
+  it('lists failed Leads with their failed step, without the event timeline', async () => {
+    prequal.next = new Error('figure-mock: timed out after 5000ms');
+    const failed = (await submit()).json();
+    prequal.next = approved;
+    await app.inject({ method: 'POST', url: '/v1/leads', payload: quiz });
+
+    const res = await get();
+    expect(res.statusCode).toBe(200);
+    const body = opsLeadsResponseSchema.parse(res.json());
+    expect(body.leads).toHaveLength(1);
+    expect(body.leads[0]).toMatchObject({
+      lead_id: failed.lead_id,
+      status: 'failed',
+      failed_step: 'prequalify',
+      error: 'figure-mock: timed out after 5000ms',
+    });
+    expect(body.leads[0]).not.toHaveProperty('events');
   });
 });

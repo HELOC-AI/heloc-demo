@@ -18,14 +18,15 @@
 | email-inbound（收信）     | 无 HTTP 入口：Cloudflare Email Routing `reply@linkerclaw.ai` 规则 | Cloudflare Worker `heloc-email-inbound` | `apps/email-inbound`  |
 | 数据库                    | Supabase 项目 `jtamjurbiyenwkqjwlsl`（us-east-2，session pooler） | Supabase                                | `apps/intake/drizzle` |
 
-| 看哪里                                    | 地址                                                                                         |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 服务健康（状态页，公开）                  | https://heloc-demo-status.betteruptime.com                                                   |
-| 运维看板（错误统计、5xx、延迟、业务流水） | Better Stack → Dashboards → **HELOC operations**                                             |
-| 告警 / 事故历史                           | Better Stack → Uptime → Incidents                                                            |
-| 异常（堆栈）                              | Better Stack → Errors → `heloc-intake` / `heloc-figure-mock` / `heloc-chase` / `heloc-email` |
-| 日志                                      | Better Stack → Telemetry → Live tail，source `heloc-*`                                       |
-| 邮件投递                                  | Resend → Emails；收信 → Cloudflare → Email Routing → Activity                                |
+| 看哪里                                                             | 地址                                                                                         |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| **运维总览**（健康、可用率、告警、错误统计、待处理 Lead + Replay） | https://heloc-demo.vercel.app/ops；命令行 `pnpm ops`（见 §5.1）                              |
+| 服务健康（状态页，公开）                                           | https://heloc-demo-status.betteruptime.com                                                   |
+| 运维看板（错误统计、5xx、延迟、业务流水）                          | Better Stack → Dashboards → **HELOC operations**                                             |
+| 告警 / 事故历史                                                    | Better Stack → Uptime → Incidents                                                            |
+| 异常（堆栈）                                                       | Better Stack → Errors → `heloc-intake` / `heloc-figure-mock` / `heloc-chase` / `heloc-email` |
+| 日志                                                               | Better Stack → Telemetry → Live tail，source `heloc-*`                                       |
+| 邮件投递                                                           | Resend → Emails；收信 → Cloudflare → Email Routing → Activity                                |
 
 所有服务间链路：
 
@@ -79,6 +80,8 @@ web → intake → figure-mock（软查询 / Document Review）
 | `ALLOW_MOCK_OVERRIDE`                                        | intake                    | 是否透传 `X-Mock-Outcome` / `X-Mock-Fault`（演示用）      |
 | `WEB_APP_URL`                                                | intake                    | 结果邮件里的结果页链接                                    |
 | `INBOUND_API_KEY` 🔒                                         | intake                    | 收信 Worker 调 `/v1/inbound-emails` 的 key                |
+| `OPS_API_KEY` 🔒                                             | intake、web（仅服务端）   | 运维读接口 `GET /v1/ops/*`（`/ops` 页面与 `pnpm ops`）    |
+| `BETTERSTACK_QUERY_HOST/USERNAME/PASSWORD` 🔒                | web（仅服务端）           | `/ops` 页面查 Better Stack 的只读 SQL 连接                |
 | `INTERNAL_API_KEY` 🔒                                        | figure-mock、chase、email | 校验调用方                                                |
 | `MOCK_MODE`                                                  | figure-mock               | `deterministic`                                           |
 | `EMAIL_SERVICE_URL` / `EMAIL_SERVICE_API_KEY` 🔒             | chase                     | 调 email（key = email 的 `INTERNAL_API_KEY`）             |
@@ -87,6 +90,8 @@ web → intake → figure-mock（软查询 / Document Review）
 | `EMAIL_PROVIDER` / `EMAIL_FROM`                              | email                     | `resend`；发件人 `HELOC Demo <noreply@linkerclaw.ai>`     |
 | `INTAKE_API_URL` / `INTAKE_API_KEY` 🔒                       | email-inbound Worker      | 把收到的回信交给 intake                                   |
 | `NEXT_PUBLIC_API_URL`                                        | web                       | intake 公网地址（构建时写入）                             |
+
+web 的服务端 secret 用 `node scripts/env-sync.ts --vercel` 推到 Vercel production（下次部署生效）。
 
 ---
 
@@ -215,7 +220,35 @@ ORDER BY updated_at DESC;
   **注意：Better Stack 看板只能查询 metrics，不能查原始日志。** 图表用到的字段（`event`、`status`、`reply_outcome`、`error_message`、`response_time_ms`；`level` 是内置的）由脚本在每个 source 上定义为「日志转指标」，写入时提取，不回填历史。要加新图表，先在 `METRICS` 里定义字段；日志告警则用 exploration（直接查原始日志），定义在 `setup-betterstack.ts --alerts`。
 
 - **状态页**：https://heloc-demo-status.betteruptime.com，展示 5 个服务的实时状态与 30 天可用率。
-- **日志跨服务追踪**：所有日志带 `request_id`（经 `X-Request-Id` 在服务间传递）和 `lead_id`。在 Better Stack Live tail 里按 `request_id:<id>` 搜索即可看到一次请求的全链路。
+- **日志跨服务追踪**：所有日志带 `request_id`（经 `X-Request-Id` 在服务间传递）和 `lead_id`。在 Better Stack Live tail 里按 `request_id:<id>` 搜索即可看到一次请求的全链路；命令行用 `pnpm ops logs <id>`（含归档日志）。
+- **定义在哪**：告警规则、看板 SQL、日志转指标字段都在 `packages/ops`，看板、`/ops` 页面、`pnpm ops` 共用同一份；改完先 `setup-dashboards.ts --verify`，再运行两个 setup 脚本同步到 Better Stack。
+
+### 5.1 运维总览：`/ops` 页面与 `pnpm ops`
+
+**https://heloc-demo.vercel.app/ops**（公开、只读，唯一的写操作是对失败 Lead 点 Replay）每 30 秒刷新：
+
+- 5 个服务的实时健康（版本、延迟、数据库检查）与状态页的 30 天可用率；
+- 3 条日志告警的状态：最近 5 分钟是否命中（= 正在告警）、24 小时命中数、最后一次；
+- 24 小时错误统计：错误数、5xx、提交 / 失败的 Lead、按服务按小时的错误、Top errors；
+- **待处理的 Lead**：失败的，或卡在处理中超过 2 分钟的（intake `GET /v1/ops/leads`），都可直接 Replay（卡住的会先确认）。
+
+页面服务端用只读的 Better Stack SQL 连接和 `OPS_API_KEY`，浏览器拿不到任何凭据；Better Stack 管理 token 不上 Vercel。某一块数据取不到时只有那一块显示原因。
+
+**`pnpm ops`**（本机，读根 `.env`；被墙时加 `NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7890`）：
+
+| 命令                                                        | 作用                                                             |
+| ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| `pnpm ops`                                                  | 与 `/ops` 页面相同的总览                                         |
+| `pnpm ops alerts`                                           | 总览 + Better Stack 最近的事故（open / acknowledged / resolved） |
+| `pnpm ops errors [--hours N]`                               | 按服务按小时的错误、Top errors                                   |
+| `pnpm ops attention`                                        | 待处理的 Lead                                                    |
+| `pnpm ops lead <lead_id>`                                   | Lead 详情与事件时间线                                            |
+| `pnpm ops logs <request_id\|lead_id\|chase_id> [--hours N]` | 所有服务里含该 id 的日志（近期 + 归档）                          |
+| `pnpm ops replay <lead_id>`                                 | Replay 失败或卡住的 Lead（需确认，`--yes` 跳过）                 |
+| `pnpm ops incident ack\|resolve <id>`                       | 确认 / 关闭事故（需确认）                                        |
+| `pnpm ops smoke`                                            | 线上冒烟（不发邮件）                                             |
+
+Claude Code 里有项目技能 **heloc-devops**（`.claude/skills/heloc-devops`），按上面的工具和本手册执行运维操作：只读操作直接做，写操作先确认，不打印任何 secret。
 
 ---
 

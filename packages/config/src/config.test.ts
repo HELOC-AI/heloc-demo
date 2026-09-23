@@ -13,6 +13,7 @@ const intakeVars = {
   CORS_ORIGINS: 'https://heloc-demo.vercel.app/, http://localhost:3000',
   WEB_APP_URL: 'https://heloc-demo.vercel.app',
   INBOUND_API_KEY: key,
+  OPS_API_KEY: key,
 };
 
 describe('loadConfig', () => {

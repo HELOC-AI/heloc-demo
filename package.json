@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit && pnpm -r typecheck",
     "test": "vitest run",
     "check:env": "node scripts/check-env-examples.ts",
-    "smoke": "node scripts/smoke.ts"
+    "smoke": "node scripts/smoke.ts",
+    "ops": "node scripts/ops.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -20,6 +21,7 @@
     "@heloc/config": "workspace:*",
     "@heloc/contracts": "workspace:*",
     "@heloc/logger": "workspace:*",
+    "@heloc/ops": "workspace:*",
     "@types/node": "^24.13.6",
     "drizzle-orm": "^0.45.3",
     "eslint": "^10.11.0",
