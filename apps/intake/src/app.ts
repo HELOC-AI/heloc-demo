@@ -3,18 +3,25 @@ import cors from '@fastify/cors';
 import { HEADERS } from '@heloc/contracts';
 import type { IntakeConfig } from '@heloc/config';
 import type { Logger } from '@heloc/logger';
-import { createServer, createServiceClient, type ErrorReporter } from '@heloc/server-kit';
+import {
+  bearerAuth,
+  createServer,
+  createServiceClient,
+  type ErrorReporter,
+} from '@heloc/server-kit';
 import { createLeadUseCases } from './application/lead-use-cases.ts';
 import type {
   ChaseGateway,
   Clock,
   IdGenerator,
   LeadTimeline,
+  NoticeGateway,
   PrequalGateway,
 } from './application/ports.ts';
 import type { LeadRepository } from './domain/lead-repository.ts';
-import { ChaseHttpGateway } from './infrastructure/http/chase-gateway.ts';
+import { ChaseHttpGateway, OutcomeNoticeHttpGateway } from './infrastructure/http/chase-gateway.ts';
 import { FigureHttpGateway } from './infrastructure/http/figure-gateway.ts';
+import { inboundRoutes } from './interface/http/inbound-routes.ts';
 import { leadRoutes } from './interface/http/lead-routes.ts';
 
 export const SERVICE = 'intake';
@@ -33,6 +40,9 @@ export interface AppDeps {
   pingDatabase: () => Promise<unknown>;
   prequal?: PrequalGateway;
   chases?: ChaseGateway;
+  notices?: NoticeGateway;
+  /** Tests: receives background work started by an accepted Chase Reply. */
+  onBackground?: (work: Promise<unknown>) => void;
   clock?: Clock;
   ids?: IdGenerator;
 }
@@ -52,25 +62,24 @@ export function buildApp(deps: AppDeps) {
         timeoutMs: FIGURE_TIMEOUT_MS,
       }),
     );
-  const chases =
-    deps.chases ??
-    new ChaseHttpGateway(
-      createServiceClient({
-        service: 'chase',
-        baseUrl: config.CHASE_API_URL,
-        apiKey: config.CHASE_API_KEY,
-        timeoutMs: CHASE_TIMEOUT_MS,
-      }),
-      clock,
-    );
+  const chaseClient = createServiceClient({
+    service: 'chase',
+    baseUrl: config.CHASE_API_URL,
+    apiKey: config.CHASE_API_KEY,
+    timeoutMs: CHASE_TIMEOUT_MS,
+  });
+  const chases = deps.chases ?? new ChaseHttpGateway(chaseClient, clock);
+  const notices = deps.notices ?? new OutcomeNoticeHttpGateway(chaseClient, clock);
 
   const useCases = createLeadUseCases({
     leads: store,
     timeline: store,
     prequal,
     chases,
+    notices,
     clock,
     ids: deps.ids ?? { newId: randomUUID },
+    resultUrl: (leadId) => `${config.WEB_APP_URL}/result/${leadId}`,
   });
 
   const app = createServer({
@@ -91,6 +100,15 @@ export function buildApp(deps: AppDeps) {
 
   app.register(
     async (v1) => leadRoutes(v1, { useCases, allowMockOverride: config.ALLOW_MOCK_OVERRIDE }),
+    { prefix: '/v1' },
+  );
+
+  // Only the inbound email adapter may post received emails.
+  app.register(
+    async (inbound) => {
+      inbound.addHook('onRequest', bearerAuth(config.INBOUND_API_KEY));
+      inboundRoutes(inbound, { useCases, logger: app.log, onBackground: deps.onBackground });
+    },
     { prefix: '/v1' },
   );
 

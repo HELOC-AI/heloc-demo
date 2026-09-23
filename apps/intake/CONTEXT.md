@@ -79,7 +79,7 @@ Lead 处于 Need More Documents 时，自动发给借款人的一次补材料通
 _Avoid_: Reminder、Nudge、Notification、Campaign
 
 **Lead Status**:
-Lead 当前所处的阶段：submitted、processing、approved、rejected、need_more_documents、chase_sent、failed。
+Lead 当前所处的阶段：submitted、processing、approved、rejected、need_more_documents、chase_sent、documents_received、failed。
 _Avoid_: State、Stage
 
 **Lead Event**:

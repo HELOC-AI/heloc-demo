@@ -2,7 +2,10 @@ import type {
   ChaseDelivery,
   LeadEvent,
   MissingDocument,
+  NoticeDelivery,
   PrequalDecision,
+  ReviewDecision,
+  SubmittedAttachment,
 } from '../domain/model.ts';
 
 export interface Clock {
@@ -46,9 +49,20 @@ export interface PrequalResult {
   rawResponse: unknown;
 }
 
+export interface ReviewRequest extends PrequalRequest {
+  documents: MissingDocument[];
+  attachments: Omit<SubmittedAttachment, 'sha256'>[];
+}
+
+export interface ReviewResult {
+  decision: ReviewDecision;
+  rawResponse: unknown;
+}
+
 /** Anti-corruption boundary to Prequalification (Figure). */
 export interface PrequalGateway {
   softPull(request: PrequalRequest, context: RequestContext): Promise<PrequalResult>;
+  reviewDocuments(request: ReviewRequest, context: RequestContext): Promise<ReviewResult>;
 }
 
 export interface ChaseRequest {
@@ -61,6 +75,21 @@ export interface ChaseRequest {
 
 export interface ChaseGateway {
   send(request: ChaseRequest, context: RequestContext): Promise<ChaseDelivery>;
+}
+
+export interface NoticeRequest {
+  noticeId: string;
+  leadId: string;
+  borrowerName: string;
+  borrowerEmail: string;
+  outcome: ReviewDecision;
+  /** Link to the borrower's result page. */
+  resultUrl: string;
+}
+
+/** Borrower Outreach, for the Outcome Notice. */
+export interface NoticeGateway {
+  sendNotice(request: NoticeRequest, context: RequestContext): Promise<NoticeDelivery>;
 }
 
 export interface RecordedLeadEvent extends LeadEvent {

@@ -1,7 +1,11 @@
 import {
+  documentReviewResponseSchema,
   HEADERS,
   softPullResponseSchema,
+  type DocumentReviewRequest,
+  type DocumentReviewResponse,
   type MockOutcome,
+  type Offer as OfferDto,
   type SoftPullRequest,
   type SoftPullResponse,
 } from '@heloc/contracts';
@@ -12,8 +16,10 @@ import type {
   PrequalResult,
   PrequalScenario,
   RequestContext,
+  ReviewRequest,
+  ReviewResult,
 } from '../../application/ports.ts';
-import type { PrequalDecision } from '../../domain/model.ts';
+import type { Offer, PrequalDecision, ReviewDecision } from '../../domain/model.ts';
 
 /**
  * Anti-corruption layer to Prequalification (Figure). Figure's language —
@@ -27,40 +33,63 @@ export class FigureHttpGateway implements PrequalGateway {
   }
 
   async softPull(request: PrequalRequest, context: RequestContext): Promise<PrequalResult> {
-    const body: SoftPullRequest = {
-      lead_id: request.leadId,
-      property_state: request.propertyState as SoftPullRequest['property_state'],
-      estimated_home_value: request.estimatedValue,
-      mortgage_balance: request.mortgageBalance,
-      credit_band: request.creditBand as SoftPullRequest['credit_band'],
-      income_band: request.incomeBand as SoftPullRequest['income_band'],
-    };
-    const response = await this.#client.post('/v1/soft-pull', body, {
+    const response = await this.#client.post('/v1/soft-pull', softPullBody(request), {
       responseSchema: softPullResponseSchema,
       requestId: context.requestId,
       headers: scenarioHeaders(context.scenario),
     });
     return { decision: toDecision(response), rawResponse: response };
   }
+
+  async reviewDocuments(request: ReviewRequest, context: RequestContext): Promise<ReviewResult> {
+    const body: DocumentReviewRequest = {
+      ...softPullBody(request),
+      documents: request.documents as DocumentReviewRequest['documents'],
+      attachments: request.attachments.map((a) => ({
+        filename: a.filename,
+        content_type: a.contentType,
+        size: a.size,
+      })),
+    };
+    const response = await this.#client.post('/v1/document-reviews', body, {
+      responseSchema: documentReviewResponseSchema,
+      requestId: context.requestId,
+    });
+    return { decision: toReview(response), rawResponse: response };
+  }
+}
+
+function softPullBody(request: PrequalRequest): SoftPullRequest {
+  return {
+    lead_id: request.leadId,
+    property_state: request.propertyState as SoftPullRequest['property_state'],
+    estimated_home_value: request.estimatedValue,
+    mortgage_balance: request.mortgageBalance,
+    credit_band: request.creditBand as SoftPullRequest['credit_band'],
+    income_band: request.incomeBand as SoftPullRequest['income_band'],
+  };
+}
+
+const toOffer = (offer: OfferDto): Offer => ({
+  lender: offer.lender,
+  amount: offer.amount,
+  aprMin: offer.apr_min,
+  aprMax: offer.apr_max,
+  termMonths: offer.term_months,
+  estimatedMonthlyPayment: offer.estimated_monthly_payment,
+  expiresAt: new Date(offer.expires_at),
+});
+
+export function toReview(response: DocumentReviewResponse): ReviewDecision {
+  return response.status === 'approved'
+    ? { outcome: 'approved', offer: toOffer(response.offer) }
+    : { outcome: 'rejected', reason: response.reason };
 }
 
 export function toDecision(response: SoftPullResponse): PrequalDecision {
   switch (response.status) {
-    case 'approved': {
-      const { offer } = response;
-      return {
-        outcome: 'approved',
-        offer: {
-          lender: offer.lender,
-          amount: offer.amount,
-          aprMin: offer.apr_min,
-          aprMax: offer.apr_max,
-          termMonths: offer.term_months,
-          estimatedMonthlyPayment: offer.estimated_monthly_payment,
-          expiresAt: new Date(offer.expires_at),
-        },
-      };
-    }
+    case 'approved':
+      return { outcome: 'approved', offer: toOffer(response.offer) };
     case 'rejected':
       return { outcome: 'rejected', reason: response.reason };
     case 'need-more-documents':

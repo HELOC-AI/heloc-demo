@@ -31,6 +31,16 @@ export const inboundEmailSchema = z.object({
 });
 export type InboundEmail = z.infer<typeof inboundEmailSchema>;
 
+/** Why a Chase Reply was not accepted (also the `reason` on `documents.rejected` events). */
+export const REPLY_REJECTIONS = [
+  'chase_not_sent',
+  'already_received',
+  'not_authenticated',
+  'sender_mismatch',
+  'no_attachments',
+] as const;
+export type ReplyRejection = (typeof REPLY_REJECTIONS)[number];
+
 export const inboundEmailResponseSchema = z.object({
   /** false when the email was ignored (not a Chase reply) or refused (see reason). */
   accepted: z.boolean(),

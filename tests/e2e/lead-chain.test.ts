@@ -26,7 +26,12 @@ import * as schema from '../../apps/intake/src/infrastructure/db/schema.ts';
 
 const silent = new Writable({ write: (_c, _e, cb) => cb() });
 const logger = () => createLogger({ service: 'e2e', destination: silent }).logger;
-const keys = { figure: 'f'.repeat(64), chase: 'c'.repeat(64), email: 'e'.repeat(64) };
+const keys = {
+  figure: 'f'.repeat(64),
+  chase: 'c'.repeat(64),
+  email: 'e'.repeat(64),
+  inbound: 'i'.repeat(64),
+};
 
 class RecordingProvider implements EmailProvider {
   readonly name = 'recording';
@@ -43,6 +48,7 @@ class RecordingProvider implements EmailProvider {
 const provider = new RecordingProvider();
 const servers: { close(): Promise<unknown> }[] = [];
 let intakeUrl = '';
+let background: Promise<unknown>[] = [];
 
 async function listen(app: ReturnType<typeof buildFigure>) {
   servers.push(app);
@@ -68,6 +74,7 @@ beforeAll(async () => {
         INTERNAL_API_KEY: keys.chase,
         EMAIL_SERVICE_URL: emailUrl,
         EMAIL_SERVICE_API_KEY: keys.email,
+        CHASE_REPLY_ADDRESS: 'reply@linkerclaw.ai',
       }),
       logger: logger(),
       version: 'e2e',
@@ -96,11 +103,14 @@ beforeAll(async () => {
         CHASE_API_KEY: keys.chase,
         CORS_ORIGINS: 'http://localhost:3000',
         ALLOW_MOCK_OVERRIDE: 'true',
+        WEB_APP_URL: 'https://heloc-demo.vercel.app',
+        INBOUND_API_KEY: keys.inbound,
       }),
       logger: logger(),
       version: 'e2e',
       store: new DrizzleLeadRepository(db),
       pingDatabase: async () => {},
+      onBackground: (work) => background.push(work),
     }),
   );
 });
@@ -205,5 +215,68 @@ describe('lead chain over HTTP', () => {
 
     const replayed = await post(`/v1/leads/${failed.body.lead_id}/replay`);
     expect(replayed.body).toMatchObject({ status: 'approved', offer: { lender: 'Figure mock' } });
+  });
+});
+
+describe('borrower replies with documents (ADR-0004)', () => {
+  it('reply → document review → outcome notice, with the reply address set on the chase email', async () => {
+    const created = await post('/v1/leads', quiz);
+    expect(created.body.status).toBe('chase_sent');
+    const replyTo = created.body.chase!.reply_to!;
+    expect(replyTo).toMatch(/^reply\+[0-9a-f-]{36}@linkerclaw\.ai$/);
+
+    // The chase email carried that Reply-To all the way to the provider.
+    const [chaseEmail] = [...provider.delivered.values()];
+    expect(chaseEmail?.email.replyTo).toBe(replyTo);
+    expect(chaseEmail?.email.text).toContain('reply to this email');
+
+    // What the Cloudflare Email Worker posts when the borrower replies.
+    background = [];
+    const res = await fetch(`${intakeUrl}/v1/inbound-emails`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${keys.inbound}` },
+      body: JSON.stringify({
+        message_id: '<borrower-reply@mail.example.com>',
+        received_at: new Date().toISOString(),
+        from: 'user@linkerclaw.ai',
+        to: replyTo,
+        subject: 'Re: Additional documents required for your HELOC application',
+        authentication: { dmarc: 'pass', detail: 'mx.cloudflare.net; dmarc=pass' },
+        attachments: [
+          {
+            filename: 'paystub.pdf',
+            content_type: 'application/pdf',
+            size: 2048,
+            sha256: 'c'.repeat(64),
+          },
+        ],
+      }),
+    });
+    expect(await res.json()).toMatchObject({ accepted: true });
+    await Promise.all(background);
+
+    const leadRes = await fetch(`${intakeUrl}/v1/leads/${created.body.lead_id}`);
+    const lead = leadResultSchema.parse(await leadRes.json());
+    expect(lead).toMatchObject({ status: 'approved', notice: { status: 'sent' } });
+    expect(eventTypes(lead).slice(-5)).toEqual([
+      'documents.received',
+      'figure.review_requested',
+      'figure.review_approved',
+      'notice.created',
+      'notice.sent',
+    ]);
+
+    // Two emails in total: the chase, then the outcome notice (keyed by notice id).
+    const keysSent = [...provider.delivered.keys()];
+    expect(keysSent).toHaveLength(2);
+    expect(keysSent[1]).toMatch(/^notice:/);
+    const notice = provider.delivered.get(keysSent[1]!)!;
+    expect(notice.email).toMatchObject({
+      to: 'user@linkerclaw.ai',
+      subject: 'Your HELOC offer is ready',
+    });
+    expect(notice.email.text).toContain(
+      `https://heloc-demo.vercel.app/result/${created.body.lead_id}`,
+    );
   });
 });

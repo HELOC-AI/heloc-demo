@@ -64,6 +64,8 @@ export default defineRailway(() => {
       INTERNAL_API_KEY: preserve(),
       EMAIL_SERVICE_URL: 'https://${{email.RAILWAY_PUBLIC_DOMAIN}}',
       EMAIL_SERVICE_API_KEY: email.env.INTERNAL_API_KEY,
+      // Replies land on Cloudflare Email Routing → Email Worker → intake (ADR-0004).
+      CHASE_REPLY_ADDRESS: 'reply@linkerclaw.ai',
     },
   });
 
@@ -91,6 +93,9 @@ export default defineRailway(() => {
       CORS_ORIGINS: WEB_ORIGIN,
       // Demo only: lets the quiz force a Figure outcome via X-Mock-Outcome.
       ALLOW_MOCK_OVERRIDE: 'true',
+      WEB_APP_URL: WEB_ORIGIN,
+      // Held by the Cloudflare Email Worker (apps/email-inbound) to post Chase Replies.
+      INBOUND_API_KEY: preserve(),
     },
   });
 

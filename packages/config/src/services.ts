@@ -37,6 +37,10 @@ export const intakeEnv = base.extend({
     .pipe(z.array(z.url()).min(1)),
   // Lets the web quiz force an outcome via X-Mock-Outcome. Never enable against a real Figure.
   ALLOW_MOCK_OVERRIDE: z.stringbool().default(false),
+  /** Public web app; the Outcome Notice links to `${WEB_APP_URL}/result/<lead id>`. */
+  WEB_APP_URL: url,
+  /** Held by the inbound email adapter (Cloudflare Email Worker) to post Chase Replies. */
+  INBOUND_API_KEY: apiKey,
 });
 export type IntakeConfig = z.output<typeof intakeEnv>;
 

@@ -4,12 +4,18 @@ import {
   type Chase,
   type ChaseDelivery,
   type CreditProfile,
+  type IncomingReply,
   type LeadEvent,
   type LeadEventType,
   type LeadStatus,
   type NextStep,
+  type NoticeDelivery,
+  type OutcomeNotice,
   type PrequalDecision,
   type Property,
+  type ReplyOutcome,
+  type ReviewDecision,
+  type Step,
 } from './model.ts';
 
 export interface LeadSnapshot {
@@ -21,6 +27,9 @@ export interface LeadSnapshot {
   purpose: string;
   decision?: PrequalDecision | undefined;
   chase?: Chase | undefined;
+  /** Figure's Document Review, once the borrower's documents are in. */
+  review?: ReviewDecision | undefined;
+  notice?: OutcomeNotice | undefined;
   createdAt: Date;
   updatedAt: Date;
   /** Optimistic-concurrency version; 0 until first persisted. */
@@ -36,9 +45,10 @@ export interface SubmitLeadInput {
 }
 
 /**
- * Aggregate root of Lead Intake. Owns its single Prequal Decision and its single Chase
- * (ADR-0003); every state change goes through a command that checks its precondition
- * and records a Lead Event.
+ * Aggregate root of Lead Intake. Owns its single Prequal Decision, its single Chase, and —
+ * after the borrower replies with documents — its single Document Review and Outcome
+ * Notice (ADR-0003, ADR-0004). Every state change goes through a command that checks its
+ * precondition and records a Lead Event.
  */
 export class Lead {
   #state: LeadSnapshot;
@@ -77,6 +87,12 @@ export class Lead {
   get chase() {
     return this.#state.chase;
   }
+  get review() {
+    return this.#state.review;
+  }
+  get notice() {
+    return this.#state.notice;
+  }
   get borrower() {
     return this.#state.borrower;
   }
@@ -100,10 +116,118 @@ export class Lead {
   }
 
   nextStep(): NextStep {
-    const { decision, chase } = this.#state;
+    const { decision, chase, review, notice } = this.#state;
     if (!decision) return 'prequalify';
-    if (decision.outcome === 'need_more_documents' && chase?.status !== 'sent') return 'chase';
+    if (decision.outcome !== 'need_more_documents') return 'done';
+    if (chase?.status !== 'sent') return 'chase';
+    if (!chase.reply) return 'done'; // waiting for the borrower's documents
+    if (!review) return 'review';
+    if (notice?.status !== 'sent') return 'notify';
     return 'done';
+  }
+
+  /**
+   * An email arrived at this Lead's Chase Reply Address. Accepted only if the Chase was
+   * sent, the receiving server verified the sender (DMARC pass), the sender is the
+   * borrower, and documents are attached. A redelivery of the accepted email is a no-op.
+   */
+  receiveReply(reply: IncomingReply, now: Date): ReplyOutcome {
+    const { chase } = this.#state;
+    const reject = (reason: Exclude<ReplyOutcome, { accepted: true }>['reason']) => {
+      this.#record(
+        'documents.rejected',
+        {
+          chase_id: chase?.id,
+          reason,
+          from_domain: reply.from.split('@')[1] ?? '',
+          attachments: reply.attachments.length,
+        },
+        now,
+      );
+      return { accepted: false, reason } as const;
+    };
+
+    if (!chase || chase.status !== 'sent') return reject('chase_not_sent');
+    if (chase.reply) {
+      if (chase.reply.messageId === reply.messageId) return { accepted: true, duplicate: true };
+      return reject('already_received');
+    }
+    if (reply.dmarc !== 'pass') return reject('not_authenticated');
+    if (reply.from.trim().toLowerCase() !== this.#state.borrower.email.trim().toLowerCase()) {
+      return reject('sender_mismatch');
+    }
+    if (reply.attachments.length === 0) return reject('no_attachments');
+
+    chase.reply = {
+      messageId: reply.messageId,
+      receivedAt: reply.receivedAt,
+      from: reply.from,
+      attachments: reply.attachments,
+    };
+    this.#transition('documents_received', now);
+    this.#record(
+      'documents.received',
+      {
+        chase_id: chase.id,
+        attachments: reply.attachments.length,
+        content_types: [...new Set(reply.attachments.map((a) => a.contentType))],
+      },
+      now,
+    );
+    return { accepted: true, duplicate: false };
+  }
+
+  startReview(now: Date): void {
+    if (this.nextStep() !== 'review') {
+      throw new DomainError('review_not_due', 'A Document Review needs accepted documents');
+    }
+    this.#transition('documents_received', now);
+    this.#record('figure.review_requested', {}, now);
+  }
+
+  recordReview(review: ReviewDecision, now: Date): void {
+    if (this.nextStep() !== 'review') {
+      throw new DomainError('review_not_due', 'A Document Review is recorded once');
+    }
+    this.#state.review = review;
+    this.#transition(review.outcome, now);
+    this.#record(
+      review.outcome === 'approved' ? 'figure.review_approved' : 'figure.review_rejected',
+      review.outcome === 'approved'
+        ? { amount: review.offer.amount, apr_min: review.offer.aprMin }
+        : { reason: review.reason },
+      now,
+    );
+  }
+
+  openNotice(noticeId: string, now: Date): void {
+    if (this.nextStep() !== 'notify') {
+      throw new DomainError('notice_not_due', 'An Outcome Notice follows a Document Review');
+    }
+    if (this.#state.notice) throw new DomainError('notice_exists', 'A Lead has one Outcome Notice');
+    this.#state.notice = { id: noticeId, status: 'pending' };
+    this.#state.updatedAt = now;
+    this.#record('notice.created', { notice_id: noticeId }, now);
+  }
+
+  markNoticeSent(delivery: NoticeDelivery, now: Date): void {
+    const notice = this.#requireUnsentNotice();
+    Object.assign(notice, { ...delivery, status: 'sent', lastError: undefined });
+    // Back to the review's outcome if an earlier attempt had failed the Lead.
+    this.#transition(this.#state.review!.outcome, now);
+    this.#record(
+      'notice.sent',
+      { notice_id: notice.id, email_message_id: delivery.emailMessageId },
+      now,
+    );
+  }
+
+  markNoticeFailed(reason: string, now: Date): void {
+    const notice = this.#requireUnsentNotice();
+    notice.status = 'failed';
+    notice.lastError = reason;
+    this.#record('notice.failed', { notice_id: notice.id, reason }, now);
+    this.#fail('notify', reason, now);
   }
 
   startPrequalification(now: Date): void {
@@ -158,7 +282,7 @@ export class Lead {
   }
 
   /** A step could not complete (dependency down, timeout); Replay resumes from it. */
-  fail(step: Exclude<NextStep, 'done'>, reason: string, now: Date): void {
+  fail(step: Step, reason: string, now: Date): void {
     if (this.nextStep() === 'done') {
       throw new DomainError('already_complete', 'A completed Lead cannot fail');
     }
@@ -176,6 +300,13 @@ export class Lead {
   #fail(step: string, reason: string, now: Date) {
     this.#transition('failed', now);
     this.#record('lead.failed', { step, reason }, now);
+  }
+
+  #requireUnsentNotice(): OutcomeNotice {
+    const { notice } = this.#state;
+    if (!notice) throw new DomainError('no_notice', 'Lead has no Outcome Notice');
+    if (notice.status === 'sent') throw new DomainError('notice_sent', 'Notice was already sent');
+    return notice;
   }
 
   #requireUnsentChase(): Chase {

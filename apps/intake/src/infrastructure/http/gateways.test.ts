@@ -1,7 +1,7 @@
 import { createServiceClient, UpstreamError } from '@heloc/server-kit';
 import Fastify from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ChaseHttpGateway } from './chase-gateway.ts';
+import { ChaseHttpGateway, OutcomeNoticeHttpGateway } from './chase-gateway.ts';
 import { FigureHttpGateway } from './figure-gateway.ts';
 
 const stub = Fastify();
@@ -22,6 +22,21 @@ beforeAll(async () => {
       subject: 'Additional documents required for your HELOC application',
       body: 'Hi John',
       email_message_id: 'email_123',
+      reply_to: `reply+${(req.body as { chase_id: string }).chase_id}@linkerclaw.ai`,
+    };
+  });
+  stub.post('/v1/document-reviews', async (req) => {
+    received.push({ url: req.url, headers: req.headers, body: req.body });
+    return { status: 'rejected', reason: 'credit_below_minimum' };
+  });
+  stub.post('/v1/outcome-notices', async (req) => {
+    received.push({ url: req.url, headers: req.headers, body: req.body });
+    return {
+      notice_id: (req.body as { notice_id: string }).notice_id,
+      status: 'sent',
+      subject: 'Your HELOC offer is ready',
+      body: 'Hi John',
+      email_message_id: 'email_456',
     };
   });
   baseUrl = await stub.listen({ host: '127.0.0.1', port: 0 });
@@ -127,6 +142,7 @@ describe('ChaseHttpGateway', () => {
       subject: 'Additional documents required for your HELOC application',
       body: 'Hi John',
       emailMessageId: 'email_123',
+      replyTo: 'reply+22222222-2222-4222-8222-222222222222@linkerclaw.ai',
       sentAt: now,
     });
     expect(received[0]?.body).toEqual({
@@ -135,6 +151,72 @@ describe('ChaseHttpGateway', () => {
       email: 'john@example.com',
       name: 'John Doe',
       missing_documents: [{ type: 'income_verification', reason: 'Income requires verification' }],
+    });
+  });
+});
+
+describe('FigureHttpGateway.reviewDocuments', () => {
+  it("sends documents and attachment metadata, and translates Figure's verdict", async () => {
+    const gateway = new FigureHttpGateway(client('figure-mock'));
+    const { decision } = await gateway.reviewDocuments(
+      {
+        ...request,
+        documents: [{ type: 'income_verification', reason: 'Income requires verification' }],
+        attachments: [{ filename: 'paystub.pdf', contentType: 'application/pdf', size: 99 }],
+      },
+      { requestId: 'req-3' },
+    );
+    expect(decision).toEqual({ outcome: 'rejected', reason: 'credit_below_minimum' });
+    expect(received[0]).toMatchObject({
+      url: '/v1/document-reviews',
+      body: {
+        lead_id: request.leadId,
+        documents: [{ type: 'income_verification' }],
+        attachments: [{ filename: 'paystub.pdf', content_type: 'application/pdf', size: 99 }],
+      },
+    });
+  });
+});
+
+describe('OutcomeNoticeHttpGateway', () => {
+  it('sends the review outcome in the contract shape', async () => {
+    const now = new Date('2026-09-23T00:00:00Z');
+    const gateway = new OutcomeNoticeHttpGateway(client('chase'), { now: () => now });
+    const delivery = await gateway.sendNotice(
+      {
+        noticeId: '44444444-4444-4444-8444-444444444444',
+        leadId: request.leadId,
+        borrowerName: 'John Doe',
+        borrowerEmail: 'john@example.com',
+        outcome: {
+          outcome: 'approved',
+          offer: {
+            lender: 'Figure mock',
+            amount: 250_000,
+            aprMin: 7.5,
+            aprMax: 9.5,
+            termMonths: 120,
+            estimatedMonthlyPayment: 2_968,
+            expiresAt: new Date('2026-10-23T00:00:00Z'),
+          },
+        },
+        resultUrl: 'https://heloc-demo.vercel.app/result/x',
+      },
+      {},
+    );
+    expect(delivery).toEqual({
+      subject: 'Your HELOC offer is ready',
+      body: 'Hi John',
+      emailMessageId: 'email_456',
+      sentAt: now,
+    });
+    expect(received[0]?.body).toMatchObject({
+      notice_id: '44444444-4444-4444-8444-444444444444',
+      outcome: {
+        status: 'approved',
+        offer: { amount: 250_000, expires_at: '2026-10-23T00:00:00.000Z' },
+      },
+      result_url: 'https://heloc-demo.vercel.app/result/x',
     });
   });
 });

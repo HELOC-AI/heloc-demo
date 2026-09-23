@@ -5,7 +5,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ConcurrencyError } from '../../domain/lead-repository.ts';
 import { Lead } from '../../domain/lead.ts';
-import type { PrequalDecision } from '../../domain/model.ts';
+import type { PrequalDecision, ReviewDecision } from '../../domain/model.ts';
 import { DrizzleLeadRepository, type Database } from './drizzle-lead-repository.ts';
 import * as schema from './schema.ts';
 
@@ -68,7 +68,7 @@ describe('DrizzleLeadRepository', () => {
     lead.startPrequalification(t0);
     lead.recordDecision(approved, t0);
     await repo.save(lead, {
-      rawPrequalResponse: { status: 'approved', offer: { amount: 150000 } },
+      rawFigureResponse: { status: 'approved', offer: { amount: 150000 } },
     });
 
     const loaded = await repo.findById(LEAD_ID);
@@ -86,7 +86,13 @@ describe('DrizzleLeadRepository', () => {
     lead.markChaseFailed('email service unavailable', t0);
     await repo.save(lead);
     lead.markChaseSent(
-      { subject: 'Docs needed', body: 'Hi John', emailMessageId: 'email_1', sentAt: t0 },
+      {
+        subject: 'Docs needed',
+        body: 'Hi John',
+        emailMessageId: 'email_1',
+        replyTo: `reply+${CHASE_ID}@linkerclaw.ai`,
+        sentAt: t0,
+      },
       t0,
     );
     await repo.save(lead);
@@ -99,8 +105,10 @@ describe('DrizzleLeadRepository', () => {
       subject: 'Docs needed',
       body: 'Hi John',
       emailMessageId: 'email_1',
+      replyTo: `reply+${CHASE_ID}@linkerclaw.ai`,
       sentAt: t0,
       lastError: undefined,
+      reply: undefined,
     });
     expect(await db.select().from(schema.chases)).toHaveLength(1);
     expect(await db.select().from(schema.figureDecisions)).toHaveLength(1);
@@ -154,5 +162,93 @@ describe('DrizzleLeadRepository', () => {
       .rows;
     expect(rows).toHaveLength(4);
     expect(rows.every((r) => r.relrowsecurity)).toBe(true);
+  });
+});
+
+describe('DrizzleLeadRepository: replies, reviews and notices', () => {
+  const NOTICE_ID = '44444444-4444-4444-8444-444444444444';
+  const review: ReviewDecision =
+    approved.outcome === 'approved'
+      ? { outcome: 'approved', offer: { ...approved.offer, amount: 250_000 } }
+      : { outcome: 'rejected', reason: 'x' };
+
+  async function repliedLead() {
+    const lead = newLead();
+    lead.startPrequalification(t0);
+    lead.recordDecision(needDocs, t0);
+    lead.openChase(CHASE_ID, t0);
+    lead.markChaseSent(
+      {
+        subject: 'Docs needed',
+        body: 'Hi John',
+        emailMessageId: 'email_1',
+        replyTo: `reply+${CHASE_ID}@linkerclaw.ai`,
+        sentAt: t0,
+      },
+      t0,
+    );
+    lead.receiveReply(
+      {
+        messageId: '<m1@x>',
+        receivedAt: new Date('2026-09-23T01:00:00.000Z'),
+        from: 'john@example.com',
+        dmarc: 'pass',
+        attachments: [
+          {
+            filename: 'paystub.pdf',
+            contentType: 'application/pdf',
+            size: 99,
+            sha256: 'b'.repeat(64),
+          },
+        ],
+      },
+      t0,
+    );
+    await repo.save(lead);
+    return lead;
+  }
+
+  it('round-trips the reply and finds the Lead by chase id', async () => {
+    const lead = await repliedLead();
+    const loaded = await repo.findByChaseId(CHASE_ID);
+    expect(loaded?.id).toBe(LEAD_ID);
+    expect(loaded?.snapshot()).toEqual(lead.snapshot());
+    expect(loaded?.status).toBe('documents_received');
+    expect(await repo.findByChaseId('55555555-5555-4555-8555-555555555555')).toBeUndefined();
+  });
+
+  it('stores the review as a second, separate Figure decision and the notice', async () => {
+    const lead = await repliedLead();
+    lead.startReview(t0);
+    lead.recordReview(review, t0);
+    await repo.save(lead, { rawFigureResponse: { status: 'approved', review: true } });
+    lead.openNotice(NOTICE_ID, t0);
+    lead.markNoticeSent(
+      { subject: 'Your HELOC offer is ready', body: 'Hi', emailMessageId: 'email_2', sentAt: t0 },
+      t0,
+    );
+    await repo.save(lead);
+
+    const loaded = await repo.findById(LEAD_ID);
+    expect(loaded?.review).toEqual(review);
+    expect(loaded?.decision).toEqual(needDocs);
+    expect(loaded?.notice).toMatchObject({
+      id: NOTICE_ID,
+      status: 'sent',
+      emailMessageId: 'email_2',
+    });
+    expect(loaded?.nextStep()).toBe('done');
+
+    const rows = await db.select().from(schema.figureDecisions);
+    expect(rows.map((r) => [r.kind, r.status]).sort()).toEqual([
+      ['document_review', 'approved'],
+      ['soft_pull', 'need_more_documents'],
+    ]);
+    expect(rows.find((r) => r.kind === 'document_review')?.rawResponse).toEqual({
+      status: 'approved',
+      review: true,
+    });
+    expect(rows.find((r) => r.kind === 'soft_pull')?.rawResponse).toBeNull();
+    expect(await db.select().from(schema.outcomeNotices)).toHaveLength(1);
   });
 });

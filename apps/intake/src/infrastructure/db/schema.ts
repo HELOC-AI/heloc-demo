@@ -1,7 +1,8 @@
 /**
  * Supabase Postgres schema for Lead Intake. Tables mirror the Lead aggregate
  * (docs/DEV-PLAN.md §3); the database also enforces the aggregate's invariants:
- * one decision per Lead and one Chase per Lead (ADR-0003).
+ * one soft-pull decision and one document review per Lead, one Chase and one
+ * Outcome Notice per Lead (ADR-0003, ADR-0004).
  *
  * RLS is enabled with no policies, so Supabase's public Data API cannot read
  * borrower PII; the service connects as the table owner and is unaffected.
@@ -28,10 +29,12 @@ export const leadStatus = pgEnum('lead_status', [
   'rejected',
   'need_more_documents',
   'chase_sent',
+  'documents_received',
   'failed',
 ]);
 
 export const chaseStatus = pgEnum('chase_status', ['pending', 'sent', 'failed']);
+export const noticeStatus = pgEnum('notice_status', ['pending', 'sent', 'failed']);
 
 const money = (name: string) => numeric(name, { precision: 12, scale: 2, mode: 'number' });
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
@@ -62,6 +65,8 @@ export const figureDecisions = pgTable(
     leadId: uuid('lead_id')
       .notNull()
       .references(() => leads.id, { onDelete: 'cascade' }),
+    /** `soft_pull` (the Prequal Decision) or `document_review` (ADR-0004). */
+    kind: text('kind').notNull().default('soft_pull'),
     /** Outcome in Lead Intake's language: approved | rejected | need_more_documents. */
     status: text('status').notNull(),
     /** The decision as the domain sees it (Offer, reason or Missing Documents). */
@@ -70,7 +75,7 @@ export const figureDecisions = pgTable(
     rawResponse: jsonb('raw_response'),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('figure_decisions_lead_id_key').on(t.leadId)],
+  (t) => [uniqueIndex('figure_decisions_lead_id_kind_key').on(t.leadId, t.kind)],
 ).enableRLS();
 
 export const chases = pgTable(
@@ -84,11 +89,33 @@ export const chases = pgTable(
     subject: text('subject'),
     body: text('body'),
     emailMessageId: text('email_message_id'),
+    /** The Reply Address the borrower answers with documents. */
+    replyTo: text('reply_to'),
     lastError: text('last_error'),
+    /** The accepted Chase Reply: metadata only, never attachment contents. */
+    reply: jsonb('reply'),
     createdAt: createdAt(),
     sentAt: timestamp('sent_at', { withTimezone: true }),
   },
   (t) => [uniqueIndex('chases_lead_id_key').on(t.leadId)],
+).enableRLS();
+
+export const outcomeNotices = pgTable(
+  'outcome_notices',
+  {
+    id: uuid('id').primaryKey(),
+    leadId: uuid('lead_id')
+      .notNull()
+      .references(() => leads.id, { onDelete: 'cascade' }),
+    status: noticeStatus('status').notNull(),
+    subject: text('subject'),
+    body: text('body'),
+    emailMessageId: text('email_message_id'),
+    lastError: text('last_error'),
+    createdAt: createdAt(),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('outcome_notices_lead_id_key').on(t.leadId)],
 ).enableRLS();
 
 export const leadEvents = pgTable(
