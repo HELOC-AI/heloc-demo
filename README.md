@@ -1,15 +1,45 @@
 # heloc-demo
 
-HELOC（房屋净值信用额度）申请垂直切片：Quiz → Lead Intake → Mock Figure soft pull → 需补材料时自动 Chase → 独立 Email Service → Resend 真实投递。
-全链路线上部署、落库 Supabase、Better Stack 监控，支持 Replay。
+HELOC（房屋净值信用额度）申请的端到端垂直切片，全部在线上运行：
 
-| 组件                | 位置               | 部署    |
-| ------------------- | ------------------ | ------- |
-| web                 | `apps/web`         | Vercel  |
-| intake-service      | `apps/intake`      | Railway |
-| figure-mock-service | `apps/figure-mock` | Railway |
-| chase-service       | `apps/chase`       | Railway |
-| email-service       | `apps/email`       | Railway |
+**问卷 → Lead Intake → Figure 软查询（mock）→ 需补材料时自动 Chase 邮件 → 借款人直接回信补材料 → Figure 审核 → 结果邮件**
+
+真实部署（Vercel + Railway）、真实落库（Supabase）、真实投递（Resend），收信走 Cloudflare Email Routing；Better Stack 负责健康检查、日志、异常、看板与告警；任何一步失败都能 Replay。
+
+|                 | 地址                                             |
+| --------------- | ------------------------------------------------ |
+| 问卷            | https://heloc-demo.vercel.app                    |
+| Lead Intake API | https://intake-production-12aa.up.railway.app    |
+| 状态页          | https://heloc-demo-status.betteruptime.com       |
+| 运维看板        | Better Stack → Dashboards → **HELOC operations** |
+
+## 架构
+
+```text
+Borrower ─► web (Next.js, Vercel)
+              │ POST /v1/leads · GET /v1/leads/:id · POST /v1/leads/:id/replay
+              ▼
+           intake (Lead aggregate, Supabase) ──► figure-mock   /v1/soft-pull · /v1/document-reviews
+              │
+              ├─► chase ──► email ──► Resend ──► 借款人收件箱
+              │  (Chase 邮件 Reply-To: reply+<chase_id>@linkerclaw.ai，含 “Reply with documents” 按钮)
+              │
+              ◄── email-inbound (Cloudflare Email Worker) ◄── Cloudflare MX ◄── 借款人回信 + 附件
+                   只信任 Cloudflare 自己的 DMARC 结论 · 附件内容不出 Worker
+
+所有服务 ──► Better Stack：uptime · 状态页 · 日志 · Errors · 看板 · 告警（邮件）
+```
+
+| 服务          | 限界上下文                   | 目录                 | 部署              |
+| ------------- | ---------------------------- | -------------------- | ----------------- |
+| web           | —                            | `apps/web`           | Vercel            |
+| intake        | Lead Intake（核心域）        | `apps/intake`        | Railway           |
+| figure-mock   | Prequalification             | `apps/figure-mock`   | Railway           |
+| chase         | Borrower Outreach            | `apps/chase`         | Railway           |
+| email         | Email Delivery               | `apps/email`         | Railway           |
+| email-inbound | Email Delivery（收信适配器） | `apps/email-inbound` | Cloudflare Worker |
+
+每个后端都分为 `domain / application / infrastructure / interface` 四层，依赖只能向内，由 ESLint 强制。共享包：`packages/contracts`（跨服务 Zod 契约）、`config`（启动时校验环境变量）、`logger`（结构化日志 + 脱敏）、`server-kit`（Fastify 基础设施）。
 
 ## 本地开发
 
@@ -17,23 +47,35 @@ HELOC（房屋净值信用额度）申请垂直切片：Quiz → Lead Intake →
 
 ```bash
 pnpm install
-for app in intake figure-mock chase email web; do cp apps/$app/.env.example apps/$app/.env; done
-# 填 .env 中的 key（本地可随便生成：openssl rand -hex 32，成对的 key 保持一致）
-pnpm dev          # 同时启动全部 app：web :3000, intake :4000, figure-mock :4001, chase :4002, email :4003
+node scripts/env-sync.ts --local   # 从仓库根 .env 生成各 app 的 .env（或手动复制各 app 的 .env.example）
+pnpm dev                           # web :3000 · intake :4000 · figure-mock :4001 · chase :4002 · email :4003
 ```
 
-| 命令                                                 | 作用                                              |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| `pnpm test`                                          | Vitest 全部单元 / 集成测试                        |
-| `pnpm lint` / `pnpm typecheck` / `pnpm format:check` | 静态检查                                          |
-| `pnpm check:env`                                     | 校验每个 app 的 `.env.example` 与 env schema 一致 |
+本地 email 默认 `EMAIL_PROVIDER=console`，只打印不发信。
+
+| 命令                                                 | 作用                                                                                 |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `pnpm test`                                          | 全部测试：单元、集成（PGlite + 真实迁移）、Worker，以及 4 个服务真实 HTTP 串联的 e2e |
+| `pnpm lint` / `pnpm typecheck` / `pnpm format:check` | 静态检查（含 DDD 分层规则）                                                          |
+| `pnpm check:env`                                     | 校验每个 app 的 `.env.example` 与 env schema 一致                                    |
+| `pnpm smoke`                                         | 对线上服务跑冒烟测试（不发邮件）                                                     |
 
 后端没有构建步骤：Node 直接运行 TypeScript（`node src/main.ts`）。
 
+## 运维脚本
+
+| 脚本                                               | 作用                                                           |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| `scripts/env-sync.ts --railway / --local`          | 把根 `.env` 的 secret 分发到 Railway / 本地                    |
+| `scripts/setup-betterstack.ts --monitors --alerts` | 日志 source、Errors 应用、uptime monitor、日志告警、值班接收人 |
+| `scripts/setup-dashboards.ts [--verify]`           | 状态页、HELOC operations 看板、图表告警                        |
+| `scripts/setup-resend-domain.ts`                   | 在 Resend 验证发信域名，并写入 Cloudflare DNS                  |
+| `.railway/railway.ts`                              | Railway 基础设施（`railway config apply`）                     |
+
 ## 文档
 
-- [开发计划](docs/DEV-PLAN.md)
-- [配置与 Secret 管理](docs/CONFIGURATION.md)
-- `docs/RUNBOOK.md`（开发中）
+- [Demo 脚本](docs/DEMO.md) · [验收清单](docs/ACCEPTANCE.md) · [Runbook](docs/RUNBOOK.md)
+- [开发计划与设计](docs/DEV-PLAN.md) · [配置与 Secret](docs/CONFIGURATION.md)
+- 领域：[Context Map](CONTEXT-MAP.md) · 各服务的 `apps/*/CONTEXT.md` · [ADR](docs/adr)
 
 > 本仓库为 public：只提交变量名（`.env.example`），任何 secret 值都不入库。

@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.29.3",
   "scripts": {
-    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "dev": "pnpm --parallel --filter './apps/*' --filter '!@heloc/email-inbound' dev",
     "build": "pnpm -r --if-present build",
     "lint": "eslint .",
     "format": "prettier --write .",

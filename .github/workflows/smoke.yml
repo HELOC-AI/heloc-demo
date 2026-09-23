@@ -1,0 +1,29 @@
+name: Smoke (production)
+
+# Post-deploy check of the live services. Sends no email (approved/rejected paths only).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm smoke
+        env:
+          INTAKE_URL: ${{ vars.INTAKE_URL }}
+          FIGURE_URL: ${{ vars.FIGURE_URL }}
+          CHASE_URL: ${{ vars.CHASE_URL }}
+          EMAIL_URL: ${{ vars.EMAIL_URL }}
+          WEB_URL: ${{ vars.WEB_URL }}
