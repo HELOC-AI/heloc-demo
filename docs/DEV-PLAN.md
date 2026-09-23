@@ -253,7 +253,7 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 - [x] web 部署占位页到 Vercel（`heloc-demo.vercel.app`，`NEXT_PUBLIC_API_URL` 已配置）
 - [x] Better Stack：4 个 log source + 4 个 errors app + 4 个 `/health` uptime monitor（均 up）
 - [x] Resend 发信域名 `linkerclaw.ai` 已验证；Cloudflare Email Routing 把 `user@linkerclaw.ai` 转发到测试 Gmail
-- [ ] GitHub Repository Variables 填 URL；`scripts/smoke.ts` 的 health 部分跑通
+- [x] GitHub Repository Variables 填 URL；`scripts/smoke.ts` 跑通（9 项；Actions → Smoke (production)，每 6 小时 + 手动）
 
 | 服务        | 公网地址                                      |
 | ----------- | --------------------------------------------- |
@@ -308,12 +308,15 @@ CI（`.github/workflows/ci.yml`，PR 与 main 触发）：`pnpm install --frozen
 
 ### Phase 7 — 文档、故障演练、Demo 彩排（1h）
 
-- [ ] `docs/RUNBOOK.md`：部署、环境变量表（引用 CONFIGURATION）、Replay、6 种 failure mode 的现象/定位/恢复
-- [ ] 故障演练：`X-Mock-Fault: timeout` → failed → replay；停掉 email 服务 → failed → 恢复 → replay（确认不重复发信）
-- [ ] README：架构图、URL 列表、本地开发、Demo 脚本
-- [ ] 按需求文档 §25 彩排一遍（3~5 分钟），对照 §26 验收清单逐项打勾
+- [x] `docs/RUNBOOK.md`：部署、环境变量表（引用 CONFIGURATION）、Replay、6 种 failure mode 的现象/定位/恢复
+- [x] 故障演练：`X-Mock-Fault: timeout` → failed → replay；停掉 email 服务 → failed → 恢复 → replay（确认不重复发信）
+- [x] README：架构图、URL 列表、本地开发、Demo 脚本
+- [x] 按需求文档 §25 彩排一遍（3~5 分钟），对照 §26 验收清单逐项打勾
 
 ---
+
+- [x] 监控 / 告警面板：状态页 https://heloc-demo-status.betteruptime.com、看板 **HELOC operations**、3 条日志告警（`scripts/setup-dashboards.ts`）
+- [x] 生产彩排：真实浏览器（经代理）走完 问卷 → 补材料 → 回信 → 页面自动变为 prequalified → Replay；证据见 [ACCEPTANCE](./ACCEPTANCE.md)、脚本见 [DEMO](./DEMO.md)
 
 ## 5.5 追加：借款人邮件回复补材料（ADR-0004）
 
