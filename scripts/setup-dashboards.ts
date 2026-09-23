@@ -23,7 +23,7 @@ import {
   DASHBOARD_SOURCE,
   HTTP_SERVICES,
   DIRECT_SOURCE,
-  serviceMetric,
+  dashboardSourceFor,
   toDirectSql,
   type LogSource,
   type QueryName,
@@ -153,7 +153,7 @@ async function ensureMetrics(ids: Record<LogSource, string>) {
   for (const service of LOG_SOURCES) {
     const url = `https://telemetry.betterstack.com/api/v2/sources/${ids[service]}/metrics`;
     const existing = new Set((await listAll(url)).map((m) => m.attributes.name));
-    const missing = [...METRICS, serviceMetric(service)].filter((m) => !existing.has(m.name));
+    const missing = METRICS.filter((m) => !existing.has(m.name));
     for (const metric of missing) await api('POST', url, metric);
     console.log(
       `metrics heloc-${service}: ${missing.length ? `added ${missing.map((m) => m.name).join(', ')}` : 'up to date'}`,
@@ -245,7 +245,7 @@ async function findDashboard(): Promise<Resource> {
 
 /** Per-chart display settings: which columns hold the time, the series and the values. */
 function settingsFor(chart: Chart): Record<string, unknown> {
-  const hasSeries = chart.query && QUERIES[chart.query].sql(DASHBOARD_SOURCE).includes('AS series');
+  const hasSeries = chart.query && QUERIES[chart.query].sql(DIRECT_SOURCE).includes('AS series');
   switch (chart.chart_type) {
     case 'number_chart':
       return {
@@ -310,11 +310,12 @@ function dashboardDefinition(ids: Record<LogSource, string>) {
         w: chart.w,
         h: chart.h,
         settings: settingsFor(chart),
-        chart_queries: [
-          query
-            ? { query_type: 'sql_expression', sql_query: query.sql(DASHBOARD_SOURCE) }
-            : { query_type: 'static_text', static_text: chart.text },
-        ],
+        chart_queries: query
+          ? ('perService' in query
+              ? HTTP_SERVICES.map((service) => query.sql(dashboardSourceFor(service)))
+              : [query.sql(DASHBOARD_SOURCE)]
+            ).map((sql) => ({ query_type: 'sql_expression', sql_query: sql }))
+          : [{ query_type: 'static_text', static_text: chart.text }],
       };
     }),
     sections: [],

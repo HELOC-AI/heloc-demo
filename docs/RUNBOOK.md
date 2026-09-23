@@ -218,7 +218,7 @@ ORDER BY updated_at DESC;
   - 回信链路失败数。
 
   全部图表 SQL 可用 `node scripts/setup-dashboards.ts --verify` 验证。
-  **注意：Better Stack 看板只能查询 metrics，不能查原始日志；每条查询只能引用一个 source。** 所以 4 个 HTTP 服务（metrics 表结构相同）通过看板的 source 选择器 + `{{__source_union__}}` 合并查询，按 `heloc_service` 标签区分服务（该标签从 2026-09-23 起写入，更早的数据显示为 unlabelled）；收信 Worker 的表结构不同，单独用 `{{source:heloc_email_inbound:metrics}}` 查询。`setup-dashboards.ts --verify` 会检查这些规则。 图表用到的字段（`event`、`status`、`reply_outcome`、`error_message`、`response_time_ms`；`level` 是内置的）由脚本在每个 source 上定义为「日志转指标」，写入时提取，不回填历史。要加新图表，先在 `METRICS` 里定义字段；日志告警则用 exploration（直接查原始日志），定义在 `setup-betterstack.ts --alerts`。
+  **注意：Better Stack 看板只能查询 metrics，不能查原始日志；每条查询只能引用一个 source。** 所以 4 个 HTTP 服务（metrics 表结构相同）的汇总图表通过看板的 source 选择器 + `{{__source_union__}}` 合并查询；按服务拆分的图表（Errors / 5xx by service、Top errors、p95）每个服务一条查询（`{{source:heloc_<svc>:metrics}}`，一张图可以有多条查询），服务名在查询里写死，历史数据也准确；收信 Worker 的表结构不同，单独用 `{{source:heloc_email_inbound:metrics}}` 查询。`setup-dashboards.ts --verify` 会检查这些规则。 图表用到的字段（`event`、`status`、`reply_outcome`、`error_message`、`response_time_ms`；`level` 是内置的）由脚本在每个 source 上定义为「日志转指标」，写入时提取，不回填历史。要加新图表，先在 `METRICS` 里定义字段；日志告警则用 exploration（直接查原始日志），定义在 `setup-betterstack.ts --alerts`。
 
 - **状态页**：https://heloc-demo-status.betteruptime.com，展示 5 个服务的实时状态与 30 天可用率。
 - **日志跨服务追踪**：所有日志带 `request_id`（经 `X-Request-Id` 在服务间传递）和 `lead_id`。在 Better Stack Live tail 里按 `request_id:<id>` 搜索即可看到一次请求的全链路；命令行用 `pnpm ops logs <id>`（含归档日志）。
