@@ -33,8 +33,9 @@ export function availableEquity(pull: Pick<SoftPull, 'homeValue' | 'mortgageBala
  *   4. otherwise (620–739)               → need-more-documents
  */
 export function evaluate(pull: SoftPull, now: Date): Outcome {
-  if (availableEquity(pull) < MIN_LINE)
+  if (availableEquity(pull) < MIN_LINE) {
     return { status: 'rejected', reason: 'insufficient_home_equity' };
+  }
   if (rank(pull.creditBand) < rank('620-659')) {
     return { status: 'rejected', reason: 'credit_below_minimum' };
   }

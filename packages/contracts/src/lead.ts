@@ -79,6 +79,17 @@ export const leadResultSchema = z.object({
       sent_at: z.iso.datetime().nullable(),
     })
     .optional(),
+  /** Why the Lead is `failed`; replay resumes from the failed step. */
   error: z.string().optional(),
+  /** The Lead's execution chain, oldest first. */
+  events: z
+    .array(
+      z.object({
+        type: z.enum(LEAD_EVENT_TYPES),
+        payload: z.record(z.string(), z.unknown()),
+        created_at: z.iso.datetime(),
+      }),
+    )
+    .optional(),
 });
 export type LeadResult = z.infer<typeof leadResultSchema>;

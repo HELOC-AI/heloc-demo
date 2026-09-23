@@ -17,7 +17,7 @@ const REGION = 'iad';
 const WEB_ORIGIN = 'https://heloc-demo.vercel.app';
 
 /** Shared build/deploy shape: pnpm workspace at repo root, TypeScript run natively by Node. */
-function app(name: string, domain: string) {
+function app(name: string, domain: string, options: { preDeploy?: string } = {}) {
   return {
     source: github(REPO, { branch: 'main' }),
     build: {
@@ -27,6 +27,7 @@ function app(name: string, domain: string) {
     },
     deploy: {
       startCommand: `node apps/${name}/src/main.ts`,
+      ...(options.preDeploy && { preDeployCommand: [options.preDeploy] }),
       healthcheckPath: '/health',
       healthcheckTimeout: 60,
       restartPolicyType: 'ON_FAILURE' as const,
@@ -76,7 +77,10 @@ export default defineRailway(() => {
   });
 
   const intake = service('intake', {
-    ...app('intake', 'intake-production-12aa.up.railway.app'),
+    ...app('intake', 'intake-production-12aa.up.railway.app', {
+      // Apply drizzle/ migrations before the new version takes traffic.
+      preDeploy: 'node apps/intake/scripts/migrate.ts',
+    }),
     env: {
       ...betterStack,
       DATABASE_URL: preserve(),
