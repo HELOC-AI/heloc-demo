@@ -60,6 +60,7 @@ chase 调用的 Email Service 在独立仓库：`git clone git@github.com:HELOC-
 | `pnpm test`                                                                  | 全部测试：单元、集成（PGlite + 真实迁移）、Worker，以及 4 个服务真实 HTTP 串联的 e2e |
 | `pnpm lint` / `pnpm typecheck` / `pnpm format:check`                         | 静态检查（含 DDD 分层规则）                                                          |
 | `pnpm check:env`                                                             | 校验每个 app 的 `.env.example` 与 env schema 一致                                    |
+| `pnpm check:contracts`                                                       | 校验 chase 使用的 Send API 契约副本与 heloc-email-service 发布的一致                 |
 | `pnpm smoke`                                                                 | 对线上服务跑冒烟测试（不发邮件）                                                     |
 | `pnpm ops [status\|alerts\|errors\|attention\|lead\|logs\|replay\|incident]` | 运维命令行（见 [RUNBOOK §5.1](docs/RUNBOOK.md)）                                     |
 
