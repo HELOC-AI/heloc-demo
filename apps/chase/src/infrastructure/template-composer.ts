@@ -11,6 +11,10 @@ export const SUBJECT = 'Additional documents required for your HELOC application
 export const APPROVED_SUBJECT = 'Your HELOC offer is ready';
 export const REJECTED_SUBJECT = 'An update on your HELOC application';
 
+/** Same caveat as the result page: a soft-pull offer is not yet a commitment. */
+const PREQUAL_DISCLAIMER =
+  'Prequalification is not a commitment to lend; final terms depend on verifying your information.';
+
 /** Deterministic template (spec §11.3); swap for an LlmComposer behind the same port. */
 export class TemplateComposer implements Composer {
   composeOutcome(notice: OutcomeNotice): ChaseMessage {
@@ -53,7 +57,7 @@ ${chase.requests
   .join('\n')}
     </ul>
     <p>Just reply to this email and attach the documents — we will pick them up automatically.</p>
-    ${replyButton(replyHref, 'Reply with documents')}
+    ${button(replyHref, 'Reply with documents')}
     <p style="font-size: 13px; color: #64748b;">
       The button opens a reply addressed to
       <a href="${escape(replyHref)}" style="color: #2563eb;">${escape(chase.replyAddress)}</a>;
@@ -78,8 +82,13 @@ export function composeOutcome(notice: OutcomeNotice): ChaseMessage {
   const date = (d: Date) =>
     new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(d);
 
+  const reviewed = notice.basis === 'document_review';
+
   if (notice.outcome.status === 'approved') {
     const o = notice.outcome.offer;
+    const intro = reviewed
+      ? 'Thanks for sending your documents. We have reviewed them and your HELOC offer is ready:'
+      : "Good news: you're prequalified for a HELOC. Here is your offer:";
     const lines = [
       `Credit line: ${usd(o.amount)}`,
       `APR: ${o.aprMin}% – ${o.aprMax}%`,
@@ -90,38 +99,43 @@ export function composeOutcome(notice: OutcomeNotice): ChaseMessage {
     const text = [
       `Hi ${name},`,
       '',
-      'Thanks for sending your documents. We have reviewed them and your HELOC offer is ready:',
+      intro,
       '',
       ...lines.map((l) => `- ${l}`),
       '',
       `View your offer: ${notice.resultUrl}`,
       '',
+      ...(reviewed ? [] : [PREQUAL_DISCLAIMER, '']),
       'Thanks.',
     ].join('\n');
+    const caveat = reviewed
+      ? ''
+      : `
+    <p style="font-size: 13px; color: #64748b;">${escape(PREQUAL_DISCLAIMER)}</p>`;
     const html = wrap(`
     <p>Hi ${escape(name)},</p>
-    <p>Thanks for sending your documents. We have reviewed them and your HELOC offer is ready:</p>
+    <p>${escape(intro)}</p>
     <ul>
 ${lines.map((l) => `      <li>${escape(l)}</li>`).join('\n')}
     </ul>
-    <p><a href="${escape(notice.resultUrl)}">View your offer</a></p>
+    ${button(notice.resultUrl, 'View your offer')}
+    <p style="font-size: 13px; color: #64748b;">
+      Or open <a href="${escape(notice.resultUrl)}" style="color: #2563eb;">${escape(notice.resultUrl)}</a>
+    </p>${caveat}
     <p>Thanks.</p>`);
     return { subject: APPROVED_SUBJECT, text, html };
   }
 
   const why = REJECTION_EXPLANATIONS[notice.outcome.reason];
-  const text = [
-    `Hi ${name},`,
-    '',
-    `Thanks for sending your documents. After reviewing them, we are unable to offer you a HELOC at this time because ${why}.`,
-    '',
-    `Details: ${notice.resultUrl}`,
-    '',
-    'Thanks.',
-  ].join('\n');
+  const verdict = reviewed
+    ? `Thanks for sending your documents. After reviewing them, we are unable to offer you a HELOC at this time because ${why}.`
+    : `Thanks for checking your HELOC options with us. We are unable to offer you a HELOC at this time because ${why}.`;
+  const text = [`Hi ${name},`, '', verdict, '', `Details: ${notice.resultUrl}`, '', 'Thanks.'].join(
+    '\n',
+  );
   const html = wrap(`
     <p>Hi ${escape(name)},</p>
-    <p>Thanks for sending your documents. After reviewing them, we are unable to offer you a HELOC at this time because ${escape(why)}.</p>
+    <p>${escape(verdict)}</p>
     <p><a href="${escape(notice.resultUrl)}">See details</a></p>
     <p>Thanks.</p>`);
   return { subject: REJECTED_SUBJECT, text, html };
@@ -141,7 +155,7 @@ export function replyMailto(chase: Chase): string {
 }
 
 /** Table-based button: Outlook ignores padding on links, so the cell carries the shape. */
-function replyButton(href: string, label: string): string {
+function button(href: string, label: string): string {
   return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 24px 0;">
       <tr>
         <td align="center" bgcolor="#2563eb" style="border-radius: 8px;">

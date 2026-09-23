@@ -109,13 +109,16 @@ export type ReplyRejection =
 export type ReplyOutcome =
   { accepted: true; duplicate: boolean } | { accepted: false; reason: ReplyRejection };
 
-/** Figure's final call on the submitted documents (resolves Need More Documents). */
-export type ReviewDecision =
+/** An outcome that settles a Lead: Approved or Rejected. */
+export type FinalOutcome =
   { outcome: 'approved'; offer: Offer } | { outcome: 'rejected'; reason: string };
+
+/** Figure's final call on the submitted documents (resolves Need More Documents). */
+export type ReviewDecision = FinalOutcome;
 
 export type NoticeStatus = 'pending' | 'sent' | 'failed';
 
-/** The email telling the borrower the Document Review's result. */
+/** The email telling the borrower the final outcome: the soft pull's, or the Document Review's. */
 export interface OutcomeNotice {
   id: string;
   status: NoticeStatus;

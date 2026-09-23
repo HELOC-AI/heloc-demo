@@ -341,6 +341,13 @@ chase POST /v1/outcome-notices → email → Resend → 借款人收到结果邮
 - Apple Mail 会把 PDF 作为 inline 附件发送：只跳过嵌在 HTML 里的图片（multipart/related）
 - **手工演示注意**：回复邮件的发件人必须等于问卷里填的邮箱。用 Gmail 回复时，问卷里就填 Gmail 地址；`user@linkerclaw.ai` 只能收（转发到 Gmail），从 Gmail 回复会因发件人不符被拒
 
+## 5.6 追加：预审直接通过 / 拒绝也发结果邮件（ADR-0006）
+
+- Outcome Notice 不再只跟在 Document Review 之后：Lead 一旦有最终结论（预审的 Approved / Rejected，或材料审核的结论）且结果邮件还没发出，`nextStep()` 就返回 `notify`；Replay、幂等键 `notice:<id>`、失败处理与每个 Lead 一封的约束都沿用
+- intake → chase 的 `POST /v1/outcome-notices` 增加 `basis`（`prequalification` | `document_review`，缺省为后者，两个服务先后部署都兼容），chase 按来源选措辞；邮件带 **View your offer** 按钮，链接到结果页 `/result/<lead_id>`（Offer 详情）
+- 结果邮件卡在 `pending` 超过 2 分钟的已决 Lead 计入 Lead Needing Attention
+- 线上冒烟改用 Resend 测试收件箱 `delivered+smoke@resend.dev`，并断言结果邮件已发出
+
 ## 6. 风险与预案
 
 | 风险                                         | 预案                                                                    |

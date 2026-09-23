@@ -188,11 +188,24 @@ describe('lead chain over HTTP', () => {
   it.each([
     ['approved', 'approved'],
     ['rejected', 'rejected'],
-  ])('X-Mock-Outcome %s reaches Figure and ends %s without email', async (outcome, status) => {
-    const { body } = await post('/v1/leads', quiz, { 'x-mock-outcome': outcome });
-    expect(body.status).toBe(status);
-    expect(provider.delivered.size).toBe(0);
-  });
+  ])(
+    'X-Mock-Outcome %s reaches Figure, ends %s and emails the result page',
+    async (outcome, status) => {
+      const { body } = await post('/v1/leads', quiz, { 'x-mock-outcome': outcome });
+      expect(body).toMatchObject({ status, notice: { status: 'sent' } });
+
+      expect(provider.delivered.size).toBe(1);
+      const [key, sent] = [...provider.delivered][0]!;
+      expect(key).toMatch(/^notice:[0-9a-f-]{36}$/);
+      expect(sent.email.to).toBe('user@linkerclaw.ai');
+      expect(sent.email.text).not.toContain('documents');
+      expect(sent.email.text).toContain(`https://heloc-demo.vercel.app/result/${body.lead_id}`);
+      if (status === 'approved') {
+        expect(sent.email.subject).toBe('Your HELOC offer is ready');
+        expect(sent.email.html).toContain('>View your offer</a>');
+      }
+    },
+  );
 
   it('recovers from an email outage by replay without sending twice', async () => {
     provider.down = true;

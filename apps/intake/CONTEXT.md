@@ -68,15 +68,15 @@ _Avoid_: Response、Inbound email、Upload
 Figure 对借款人提交材料的最终审核，把 Need More Documents 落定为 Approved 或 Rejected。每个 Lead 至多一次，结论不再改变。
 _Avoid_: Re-underwriting、Second pull、Re-check
 
-**Outcome Notice**:
-Document Review 出结论后，告诉借款人结果的一封邮件。每个 Lead 至多一封。
-_Avoid_: Result email、Notification
-
 ### 跟进与运维
 
 **Chase**:
 Lead 处于 Need More Documents 时，自动发给借款人的一次补材料通知。每个 Lead 至多一个 Chase，它要么待发送、要么已发出、要么发送失败。
 _Avoid_: Reminder、Nudge、Notification、Campaign
+
+**Outcome Notice**:
+Lead 得到最终结论后，告诉借款人结果的一封邮件，附结果页（Offer 详情）链接。最终结论要么是预审直接给出的 Approved / Rejected，要么是 Document Review 的结论（ADR-0006）。每个 Lead 至多一封。
+_Avoid_: Result email、Notification
 
 **Lead Status**:
 Lead 当前所处的阶段：submitted、processing、approved、rejected、need_more_documents、chase_sent、documents_received、failed。
@@ -87,7 +87,7 @@ Lead 上已经发生的一件事的不可变记录，如 lead.created、figure.n
 _Avoid_: Log、Audit entry、History
 
 **Replay**:
-从上次停下的地方继续推进一个 Lead：缺预审就做预审，缺 Chase 就发 Chase，收到材料未审就做 Document Review，审完未通知就发 Outcome Notice，都已完成则什么都不做。Replay 从不重做已经完成的步骤。
+从上次停下的地方继续推进一个 Lead：缺预审就做预审，缺 Chase 就发 Chase，收到材料未审就做 Document Review，有了最终结论还没通知就发 Outcome Notice，都已完成则什么都不做。Replay 从不重做已经完成的步骤。
 _Avoid_: Retry、Resubmit、Rerun
 
 **Lead Needing Attention**:

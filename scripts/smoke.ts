@@ -1,6 +1,7 @@
 /**
- * Post-deploy smoke test against the live services. Sends no email: it only exercises
- * the approved / rejected paths (forced with X-Mock-Outcome) and Replay idempotency.
+ * Post-deploy smoke test against the live services. It only exercises the approved /
+ * rejected paths (forced with X-Mock-Outcome) and Replay idempotency, so it never sends a
+ * Chase; the outcome emails go to Resend's test inbox (ADR-0006).
  *
  *   node scripts/smoke.ts
  *
@@ -52,7 +53,9 @@ async function post(path: string, body?: object, headers: Record<string, string>
 
 const quiz = {
   name: 'Smoke Test',
-  email: 'smoke-test@example.com',
+  // Resend's test inbox: the approved/rejected outcome emails really go out, but a test
+  // address never bounces or hurts the sending domain's reputation.
+  email: 'delivered+smoke@resend.dev',
   phone: '+14155550000',
   property_state: 'CA',
   estimated_home_value: 800_000,
@@ -83,14 +86,16 @@ let approved: LeadResult | undefined;
 await check('lead: approved path (forced)', async () => {
   const { status, lead } = await post('/v1/leads', quiz, { 'x-mock-outcome': 'approved' });
   assert(status === 201 && lead.status === 'approved' && lead.offer, `${status} ${lead.status}`);
+  assert(lead.notice?.status === 'sent', `outcome email ${lead.notice?.status ?? 'missing'}`);
   approved = lead;
-  return `${lead.lead_id} offer $${lead.offer.amount}`;
+  return `${lead.lead_id} offer $${lead.offer.amount}, outcome email sent`;
 });
 
 await check('lead: rejected path (forced)', async () => {
   const { status, lead } = await post('/v1/leads', quiz, { 'x-mock-outcome': 'rejected' });
   assert(status === 201 && lead.status === 'rejected' && lead.reason, `${status} ${lead.status}`);
-  return `${lead.lead_id} reason ${lead.reason}`;
+  assert(lead.notice?.status === 'sent', `outcome email ${lead.notice?.status ?? 'missing'}`);
+  return `${lead.lead_id} reason ${lead.reason}, outcome email sent`;
 });
 
 await check('lead: invalid borrower data → 400', async () => {

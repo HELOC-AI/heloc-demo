@@ -85,44 +85,73 @@ describe('TemplateComposer', () => {
 });
 
 describe('TemplateComposer.composeOutcome', () => {
-  const notice = (outcome: OutcomeNotice['outcome']): OutcomeNotice => ({
+  const offer = {
+    lender: 'Figure mock',
+    amount: 250_000,
+    aprMin: 7.5,
+    aprMax: 9.5,
+    termMonths: 120,
+    estimatedMonthlyPayment: 2_968,
+    expiresAt: new Date('2026-10-23T00:00:00Z'),
+  };
+  const notice = (
+    outcome: OutcomeNotice['outcome'],
+    basis: OutcomeNotice['basis'] = 'document_review',
+  ): OutcomeNotice => ({
     noticeId: 'n1',
     leadId: 'l1',
     borrower: { name: 'John Doe', email: 'john@example.com' },
     outcome,
+    basis,
     resultUrl: 'https://heloc-demo.vercel.app/result/l1',
   });
+  const compose = (n: OutcomeNotice) => new TemplateComposer().composeOutcome(n);
 
   it('summarises the offer and links to the result page', () => {
-    const message = new TemplateComposer().composeOutcome(
-      notice({
-        status: 'approved',
-        offer: {
-          lender: 'Figure mock',
-          amount: 250_000,
-          aprMin: 7.5,
-          aprMax: 9.5,
-          termMonths: 120,
-          estimatedMonthlyPayment: 2_968,
-          expiresAt: new Date('2026-10-23T00:00:00Z'),
-        },
-      }),
-    );
+    const message = compose(notice({ status: 'approved', offer }));
     expect(message.subject).toBe('Your HELOC offer is ready');
+    expect(message.text).toContain('We have reviewed them');
     expect(message.text).toContain('- Credit line: $250,000');
     expect(message.text).toContain('- APR: 7.5% – 9.5%');
     expect(message.text).toContain('- Term: 10 years');
     expect(message.text).toContain('- Offer valid until: October 23, 2026');
     expect(message.text).toContain('View your offer: https://heloc-demo.vercel.app/result/l1');
     expect(message.html).toContain('href="https://heloc-demo.vercel.app/result/l1"');
+    expect(message.html).toContain('>View your offer</a>');
+  });
+
+  it('a soft-pull offer says prequalified, not reviewed, and carries the caveat', () => {
+    const message = compose(notice({ status: 'approved', offer }, 'prequalification'));
+    expect(message.subject).toBe('Your HELOC offer is ready');
+    expect(message.text).toContain("you're prequalified");
+    expect(message.text).not.toContain('documents');
+    expect(message.text).toContain('not a commitment to lend');
+    expect(message.text).toContain('View your offer: https://heloc-demo.vercel.app/result/l1');
+    expect(message.html).toContain('href="https://heloc-demo.vercel.app/result/l1"');
   });
 
   it('explains a rejection in plain words', () => {
-    const message = new TemplateComposer().composeOutcome(
-      notice({ status: 'rejected', reason: 'credit_below_minimum' }),
-    );
+    const message = compose(notice({ status: 'rejected', reason: 'credit_below_minimum' }));
     expect(message.subject).toBe('An update on your HELOC application');
+    expect(message.text).toContain('After reviewing them');
     expect(message.text).toContain('below our current minimum');
     expect(message.text).not.toContain('credit_below_minimum');
+  });
+
+  it('a soft-pull rejection does not mention documents and links to the details', () => {
+    const message = compose(
+      notice({ status: 'rejected', reason: 'insufficient_home_equity' }, 'prequalification'),
+    );
+    expect(message.text).toContain('Thanks for checking your HELOC options');
+    expect(message.text).not.toContain('documents');
+    expect(message.text).toContain('Details: https://heloc-demo.vercel.app/result/l1');
+  });
+
+  it('escapes borrower-controlled text in the HTML', () => {
+    const message = compose({
+      ...notice({ status: 'approved', offer }, 'prequalification'),
+      borrower: { name: '<b>Eve</b>', email: 'eve@example.com' },
+    });
+    expect(message.html).not.toContain('<b>Eve</b>');
   });
 });

@@ -22,7 +22,7 @@ export interface LeadUseCaseDeps {
   notices: NoticeGateway;
   clock: Clock;
   ids: IdGenerator;
-  /** The borrower's result page for a Lead, linked from the Outcome Notice. */
+  /** The borrower's result page (offer details) for a Lead, linked from the Outcome Notice. */
   resultUrl: (leadId: string) => string;
 }
 
@@ -158,7 +158,8 @@ export function createLeadUseCases(deps: LeadUseCaseDeps) {
             leadId: lead.id,
             borrowerName: lead.borrower.name,
             borrowerEmail: lead.borrower.email,
-            outcome: lead.review!,
+            outcome: lead.finalOutcome!,
+            basis: lead.review ? 'document_review' : 'prequalification',
             resultUrl: deps.resultUrl(lead.id),
           },
           context,

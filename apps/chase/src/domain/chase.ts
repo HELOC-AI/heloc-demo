@@ -55,7 +55,8 @@ export const deliveryKey = (chase: Pick<Chase, 'chaseId'>) => `chase:${chase.cha
 
 export const firstName = (borrower: Borrower) => borrower.name.trim().split(/\s+/)[0] ?? '';
 
-// Outcome Notice: the result of the Document Review, told to the borrower.
+// Outcome Notice: the final outcome — from the soft pull or the Document Review — told to
+// the borrower, with a link to the result page that shows the offer.
 
 export interface NoticeOffer {
   lender: string;
@@ -75,6 +76,8 @@ export interface OutcomeNotice {
   borrower: Borrower;
   outcome:
     { status: 'approved'; offer: NoticeOffer } | { status: 'rejected'; reason: RejectionReason };
+  /** `document_review`: the outcome came from reviewing documents the borrower sent. */
+  basis: 'prequalification' | 'document_review';
   resultUrl: string;
 }
 

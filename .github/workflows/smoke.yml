@@ -1,6 +1,7 @@
 name: Smoke (production)
 
-# Post-deploy check of the live services. Sends no email (approved/rejected paths only).
+# Post-deploy check of the live services. The approved/rejected outcome emails go to
+# Resend's test inbox (delivered+smoke@resend.dev); no Chase is ever sent.
 on:
   workflow_dispatch:
   schedule:

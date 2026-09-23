@@ -55,7 +55,7 @@ web → intake → figure-mock（软查询 / Document Review）
 
 **新增数据库迁移：** 改 `apps/intake/src/infrastructure/db/schema.ts` → `pnpm --filter @heloc/intake db:generate` → 提交 `drizzle/` 下的新文件。
 
-**部署后验证：** `pnpm smoke`（本机被墙时加 `NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7890`），或 GitHub Actions → **Smoke (production)** → Run workflow（每 6 小时也会自动跑）。它不发邮件。
+**部署后验证：** `pnpm smoke`（本机被墙时加 `NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:7890`），或 GitHub Actions → **Smoke (production)** → Run workflow（每 6 小时也会自动跑）。它只发结果邮件到 Resend 的测试收件箱 `delivered+smoke@resend.dev`（不会退信，也不影响发信域名信誉），不会发补材料邮件。
 
 **回滚：**
 
@@ -106,7 +106,7 @@ POST /v1/leads/:id/replay
 curl -X POST https://intake-production-12aa.up.railway.app/v1/leads/<lead_id>/replay
 ```
 
-- **断点续跑**：从 Lead 还没完成的那一步继续，顺序为 预审 → 补材料邮件 → 材料审核 → 结果邮件。已完成的步骤不会重做（ADR-0002/0003/0004）。
+- **断点续跑**：从 Lead 还没完成的那一步继续，顺序为 预审 → 补材料邮件 → 材料审核 → 结果邮件；预审直接通过或拒绝的 Lead 是 预审 → 结果邮件。已完成的步骤不会重做（ADR-0002/0003/0004/0006）。
   - 预审结果一旦拿到就不会再查；补材料邮件用同一个 chase id 重发，Resend 按幂等键 `chase:<id>` 去重，不会发两封；材料审核只做一次；结果邮件用幂等键 `notice:<id>`。
 - **返回**：`200` 表示已恢复或本来就完成（会记一条 `lead.replayed`）；`502` 表示依赖仍不可用，`failed_step` 指出卡在哪一步；`404` 表示 Lead 不存在；`409` 表示并发 Replay，稍后重试即可。
 - 结果页的 **Try again** 按钮就是调这个接口。
@@ -247,7 +247,7 @@ ORDER BY updated_at DESC;
 | `pnpm ops logs <request_id\|lead_id\|chase_id> [--hours N]` | 所有服务里含该 id 的日志（近期 + 归档）                          |
 | `pnpm ops replay <lead_id>`                                 | Replay 失败或卡住的 Lead（需确认，`--yes` 跳过）                 |
 | `pnpm ops incident ack\|resolve <id>`                       | 确认 / 关闭事故（需确认）                                        |
-| `pnpm ops smoke`                                            | 线上冒烟（不发邮件）                                             |
+| `pnpm ops smoke`                                            | 线上冒烟（结果邮件只发到 Resend 测试收件箱）                     |
 
 Claude Code 里有项目技能 **heloc-devops**（`.claude/skills/heloc-devops`），按上面的工具和本手册执行运维操作：只读操作直接做，写操作先确认，不打印任何 secret。
 

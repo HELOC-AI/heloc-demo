@@ -179,7 +179,7 @@ describe('FigureHttpGateway.reviewDocuments', () => {
 });
 
 describe('OutcomeNoticeHttpGateway', () => {
-  it('sends the review outcome in the contract shape', async () => {
+  it('sends the final outcome and its basis in the contract shape', async () => {
     const now = new Date('2026-09-23T00:00:00Z');
     const gateway = new OutcomeNoticeHttpGateway(client('chase'), { now: () => now });
     const delivery = await gateway.sendNotice(
@@ -200,6 +200,7 @@ describe('OutcomeNoticeHttpGateway', () => {
             expiresAt: new Date('2026-10-23T00:00:00Z'),
           },
         },
+        basis: 'prequalification',
         resultUrl: 'https://heloc-demo.vercel.app/result/x',
       },
       {},
@@ -216,6 +217,7 @@ describe('OutcomeNoticeHttpGateway', () => {
         status: 'approved',
         offer: { amount: 250_000, expires_at: '2026-10-23T00:00:00.000Z' },
       },
+      basis: 'prequalification',
       result_url: 'https://heloc-demo.vercel.app/result/x',
     });
   });

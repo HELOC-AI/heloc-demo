@@ -42,10 +42,10 @@ beforeEach(async () => {
   repo = new DrizzleLeadRepository(db);
 });
 
-const newLead = () =>
+const newLead = (id = LEAD_ID) =>
   Lead.submit(
     {
-      id: LEAD_ID,
+      id,
       borrower: { name: 'John Doe', email: 'john@example.com', phone: '+14155551234' },
       property: { state: 'CA', estimatedValue: 800_000.5, mortgageBalance: 0 },
       creditProfile: { creditBand: '700-739', incomeBand: '150k-200k' },
@@ -250,5 +250,48 @@ describe('DrizzleLeadRepository: replies, reviews and notices', () => {
     });
     expect(rows.find((r) => r.kind === 'soft_pull')?.rawResponse).toBeNull();
     expect(await db.select().from(schema.outcomeNotices)).toHaveLength(1);
+  });
+});
+
+describe('DrizzleLeadRepository: needingAttention', () => {
+  const id = (n: number) => `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-000000000000`;
+  const later = new Date('2026-09-23T00:10:00.000Z');
+  const stuckBefore = new Date('2026-09-23T00:05:00.000Z');
+
+  async function decidedLead(n: number, at = t0) {
+    const lead = newLead(id(n));
+    lead.startPrequalification(at);
+    lead.recordDecision(approved, at);
+    await repo.save(lead);
+    return lead;
+  }
+
+  it('finds failed Leads, stuck steps and unsent Outcome Notices, but not healthy Leads', async () => {
+    const failed = newLead(id(1));
+    failed.startPrequalification(t0);
+    failed.fail('prequalify', 'figure down', t0);
+    await repo.save(failed);
+
+    const stuck = newLead(id(2));
+    stuck.startPrequalification(t0);
+    await repo.save(stuck);
+
+    const noticeStuck = await decidedLead(3);
+    noticeStuck.openNotice('33333333-3333-4333-8333-333333333333', t0);
+    await repo.save(noticeStuck);
+
+    const noticeInFlight = await decidedLead(4, later);
+    noticeInFlight.openNotice('44444444-4444-4444-8444-444444444444', later);
+    await repo.save(noticeInFlight);
+
+    const done = await decidedLead(5);
+    done.openNotice('55555555-5555-4555-8555-555555555555', t0);
+    done.markNoticeSent(
+      { subject: 'Your HELOC offer is ready', body: 'Hi', emailMessageId: 'email_5', sentAt: t0 },
+      t0,
+    );
+    await repo.save(done);
+
+    expect((await repo.needingAttention(stuckBefore, 10)).sort()).toEqual([id(1), id(2), id(3)]);
   });
 });

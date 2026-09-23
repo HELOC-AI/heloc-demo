@@ -47,7 +47,11 @@ export const sendEmailResponseSchema = z.object({
 });
 export type SendEmailResponse = z.infer<typeof sendEmailResponseSchema>;
 
-// intake → chase: tell the borrower the result of the document review
+// intake → chase: tell the borrower the final outcome (soft pull or document review)
+
+/** Which step settled the outcome: the soft pull itself, or the review of sent documents. */
+export const NOTICE_BASES = ['prequalification', 'document_review'] as const;
+export type NoticeBasis = (typeof NOTICE_BASES)[number];
 
 export const outcomeNoticeRequestSchema = z.object({
   notice_id: z.uuid(),
@@ -58,7 +62,9 @@ export const outcomeNoticeRequestSchema = z.object({
     z.object({ status: z.literal('approved'), offer: offerSchema }),
     z.object({ status: z.literal('rejected'), reason: z.enum(REJECTION_REASONS) }),
   ]),
-  /** Link to the borrower's result page. */
+  /** Defaults to `document_review`, the only basis before soft-pull outcomes were emailed. */
+  basis: z.enum(NOTICE_BASES).default('document_review'),
+  /** Link to the borrower's result page, which shows the offer. */
   result_url: z.url(),
 });
 export type OutcomeNoticeRequest = z.infer<typeof outcomeNoticeRequestSchema>;
