@@ -32,8 +32,8 @@ import {
 } from '@/lib/lead-form';
 import {
   availableEquity,
+  equityHint,
   formatMoneyInput,
-  MIN_LINE,
   parseMoney,
   sanitizeMoneyInput,
 } from '@/lib/money';
@@ -324,7 +324,7 @@ function Section({ title, step, children }: { title: string; step: number; child
 }
 
 function EquityHint({ equity }: { equity: number }) {
-  const enough = equity >= MIN_LINE;
+  const { enough, message } = equityHint(equity);
   return (
     <div
       aria-live="polite"
@@ -337,9 +337,7 @@ function EquityHint({ equity }: { equity: number }) {
         <span className="font-semibold tabular-nums">{formatUsd(Math.max(0, equity))}</span>
       </div>
       <p className={`mt-1 text-xs ${enough ? 'text-emerald-800/80' : 'text-amber-800'}`}>
-        {enough
-          ? "85% of your home's value, minus your mortgage balance."
-          : `Lines start at ${formatUsd(MIN_LINE)}, so you may not have enough equity to qualify.`}
+        {message}
       </p>
     </div>
   );

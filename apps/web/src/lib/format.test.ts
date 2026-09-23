@@ -3,6 +3,7 @@ import {
   formatAprRange,
   formatDate,
   formatDateTime,
+  formatFileSize,
   formatTerm,
   formatTime,
   formatUsd,
@@ -37,6 +38,28 @@ describe('formatTerm', () => {
     [1, '1 month'],
   ])('%i months → %s', (months, expected) => {
     expect(formatTerm(months)).toBe(expected);
+  });
+});
+
+describe('formatFileSize', () => {
+  it.each([
+    [0, '0 bytes'],
+    [1, '1 byte'],
+    [812, '812 bytes'],
+    [1024, '1 KB'],
+    [1536, '1.5 KB'],
+    [48_300, '47 KB'],
+    [2_400_000, '2.3 MB'],
+    [15 * 1024 * 1024, '15 MB'],
+    [3 * 1024 ** 3, '3 GB'],
+    [5 * 1024 ** 4, '5120 GB'],
+  ])('%i bytes → %s', (bytes, expected) => {
+    expect(formatFileSize(bytes)).toBe(expected);
+  });
+
+  it('never shows a negative or non-finite size', () => {
+    expect(formatFileSize(-5)).toBe('0 bytes');
+    expect(formatFileSize(Number.NaN)).toBe('0 bytes');
   });
 });
 

@@ -1,7 +1,5 @@
-/** Lenders let a borrower draw up to 85% of the home's value, minus what they still owe. */
-export const MAX_COMBINED_LTV = 0.85;
-/** Smallest line Figure offers; below this the Lead is rejected for insufficient equity. */
-export const MIN_LINE = 25_000;
+import { HELOC_LIMITS } from '@heloc/contracts';
+import { formatUsd } from './format.ts';
 
 /**
  * Parses what a borrower typed into a money field ("800,000", "$1,250,000.50", " 0 ")
@@ -29,11 +27,35 @@ export function formatMoneyInput(raw: string): string {
 
 /**
  * Equity a HELOC could draw on, per the same rule underwriting uses:
- * 0.85 × home value − mortgage balance. Undefined until both amounts are usable.
+ * max combined LTV (85%) × home value − mortgage balance. Undefined until both amounts are usable.
  */
 export function availableEquity(homeValue?: number, mortgageBalance?: number): number | undefined {
   if (homeValue === undefined || mortgageBalance === undefined) return undefined;
   if (!Number.isFinite(homeValue) || !Number.isFinite(mortgageBalance)) return undefined;
   if (homeValue <= 0 || mortgageBalance < 0) return undefined;
-  return homeValue * MAX_COMBINED_LTV - mortgageBalance;
+  return homeValue * HELOC_LIMITS.maxCombinedLtv - mortgageBalance;
+}
+
+export interface EquityHint {
+  /** Whether the equity reaches the smallest line Figure offers. */
+  enough: boolean;
+  message: string;
+}
+
+const percent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 0 });
+
+/** What the quiz says under the available-equity preview, using Figure's published limits. */
+export function equityHint(equity: number): EquityHint {
+  const { maxCombinedLtv, minLine, maxLine } = HELOC_LIMITS;
+  if (equity < minLine) {
+    return {
+      enough: false,
+      message: `Lines start at ${formatUsd(minLine)}, so you may not have enough equity to qualify.`,
+    };
+  }
+  const rule = `${percent.format(maxCombinedLtv)} of your home's value, minus your mortgage balance.`;
+  return {
+    enough: true,
+    message: equity > maxLine ? `${rule} Lines go up to ${formatUsd(maxLine)}.` : rule,
+  };
 }
