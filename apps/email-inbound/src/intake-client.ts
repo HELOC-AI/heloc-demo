@@ -3,9 +3,12 @@
  *
  * Outcomes:
  * - 2xx → `delivered` (Intake decided; `accepted: false` is still a final answer).
- * - 4xx (except 408/429) → `refused`: permanent, retrying the same payload cannot succeed.
- * - 5xx, 408, 429, network error, timeout → throws `IntakeUnavailableError` so the caller can
- *   signal a temporary failure and have the sending mail server retry later.
+ * - 400/413/422 (and other 4xx) → `refused`: the payload itself is wrong, retrying the same
+ *   email cannot succeed.
+ * - 5xx, 401, 403, 404, 408, 429, network error, timeout → throws `IntakeUnavailableError`
+ *   so the caller signals a temporary failure and the sending mail server retries later.
+ *   401/403/404 here mean *our* misconfiguration (wrong key, endpoint not deployed yet) —
+ *   the borrower's reply must survive until it is fixed, not bounce.
  */
 import {
   errorResponseSchema,
@@ -13,6 +16,8 @@ import {
   type InboundEmailResponse,
   inboundEmailResponseSchema,
 } from '@heloc/contracts';
+
+const TEMPORARY_STATUSES = new Set([401, 403, 404, 408, 429]);
 
 export const INBOUND_EMAILS_PATH = '/v1/inbound-emails';
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -73,7 +78,7 @@ export async function forwardInboundEmail(
       response: parsed.success ? parsed.data : undefined,
     };
   }
-  if (res.status >= 500 || res.status === 408 || res.status === 429) {
+  if (res.status >= 500 || TEMPORARY_STATUSES.has(res.status)) {
     throw new IntakeUnavailableError(`intake responded ${res.status}`, res.status);
   }
   const error = errorResponseSchema.safeParse(body);

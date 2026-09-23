@@ -110,6 +110,29 @@
 
 ---
 
+### 2.8 追加变量（ADR-0004：邮件回复补材料）
+
+| 变量                                                      | 服务                               | 类型  | 说明 / 来源                                                                          |
+| --------------------------------------------------------- | ---------------------------------- | ----- | ------------------------------------------------------------------------------------ |
+| `WEB_APP_URL`                                             | intake                             | 📄    | 结果页地址，Outcome Notice 里的链接；IaC 中为 `https://heloc-demo.vercel.app`        |
+| `INBOUND_API_KEY`                                         | intake                             | 🔒    | Email Worker 调 `POST /v1/inbound-emails` 用；根 `.env` 的 `INTAKE__INBOUND_API_KEY` |
+| `CHASE_REPLY_ADDRESS`                                     | chase                              | 📄    | `reply@linkerclaw.ai`；每个 Chase 的 Reply-To 为 `reply+<chase_id>@linkerclaw.ai`    |
+| `INTAKE_API_URL`                                          | email-inbound（Cloudflare Worker） | 📄    | `wrangler.jsonc` 的 `vars`                                                           |
+| `INTAKE_API_KEY`                                          | email-inbound                      | 🔒    | Worker secret，值 = `INTAKE__INBOUND_API_KEY`                                        |
+| `BETTERSTACK_SOURCE_TOKEN` / `BETTERSTACK_INGESTING_HOST` | email-inbound                      | 🔒/📄 | Worker secret，值 = `EMAIL_INBOUND__BETTERSTACK_*`                                   |
+
+Worker 部署（wrangler 未登录时借用已登录的 `cf` CLI 的 OAuth token，不打印）：
+
+```bash
+cd apps/email-inbound
+export CLOUDFLARE_API_TOKEN=$(python3 -c "import json;print(json.load(open('$HOME/Library/Preferences/cloudflare/config/default.json'))['oauth_token'])")
+export CLOUDFLARE_ACCOUNT_ID=<account id>
+npx wrangler deploy                       # 代码；secret 已存在则保留
+npx wrangler deploy --secrets-file <tmp>  # 需要更新 secret 时（临时文件 600 权限，用完即删）
+```
+
+Cloudflare Email Routing：`linkerclaw.ai` 开启 subaddressing；规则 `reply@linkerclaw.ai` → Worker `heloc-email-inbound`；`user@linkerclaw.ai` → 转发到测试 Gmail。
+
 ## 3. 服务间鉴权：每一跳一把 key
 
 ```text

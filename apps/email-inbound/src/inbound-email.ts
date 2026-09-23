@@ -62,9 +62,13 @@ export async function buildInboundEmail(input: RawInboundMessage): Promise<Build
   };
 }
 
-/** Real attachments only: inline parts and parts with a Content-ID are embedded content. */
+/**
+ * Real attachments only: skip parts embedded in the HTML body (multipart/related, e.g. a
+ * signature logo). Disposition alone is not enough — Apple Mail sends attached PDFs as
+ * `inline`, and those are documents.
+ */
 export function isRealAttachment(attachment: Attachment): boolean {
-  return attachment.disposition !== 'inline' && !attachment.contentId;
+  return !attachment.related;
 }
 
 async function describeAttachment(

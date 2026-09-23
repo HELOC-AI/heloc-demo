@@ -80,7 +80,7 @@ describe('forwardInboundEmail', () => {
     });
   });
 
-  it.each([400, 401, 403, 404, 409, 422])('returns refused (no retry) on %i', async (status) => {
+  it.each([400, 409, 413, 422])('returns refused (no retry) on %i', async (status) => {
     const { fetch } = fakeFetch(() =>
       json(status, { error: 'bad_request', message: 'x'.repeat(1000), details: { from: 'pii' } }),
     );
@@ -94,16 +94,16 @@ describe('forwardInboundEmail', () => {
   });
 
   it('returns refused with no details when the 4xx body is not JSON', async () => {
-    const { fetch } = fakeFetch(() => new Response('Not Found', { status: 404 }));
+    const { fetch } = fakeFetch(() => new Response('Bad Request', { status: 400 }));
     await expect(forwardInboundEmail(EMAIL, 'r', options(fetch))).resolves.toEqual({
       kind: 'refused',
-      status: 404,
+      status: 400,
       error: undefined,
       message: undefined,
     });
   });
 
-  it.each([500, 502, 503, 504, 408, 429])('throws (retry) on %i', async (status) => {
+  it.each([500, 502, 503, 504, 401, 403, 404, 408, 429])('throws (retry) on %i', async (status) => {
     const { fetch } = fakeFetch(() => json(status, { error: 'x', message: 'y' }));
     const error = await forwardInboundEmail(EMAIL, 'r', options(fetch)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(IntakeUnavailableError);

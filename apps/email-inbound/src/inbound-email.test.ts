@@ -9,7 +9,8 @@ import {
   RECIPIENT,
   rawReply,
 } from './__fixtures__/reply.ts';
-import { buildInboundEmail, sha256Hex } from './inbound-email.ts';
+import type { Attachment } from 'postal-mime';
+import { buildInboundEmail, isRealAttachment, sha256Hex } from './inbound-email.ts';
 
 const receivedAt = new Date('2026-09-23T04:56:42.000Z');
 
@@ -100,5 +101,30 @@ describe('buildInboundEmail', () => {
     ].join('\r\n');
     const result = await build(raw);
     expect(result.ok && result.email.attachments).toEqual([]);
+  });
+});
+
+describe('isRealAttachment', () => {
+  const part = (overrides: Partial<Attachment>): Attachment =>
+    ({
+      filename: 'x',
+      mimeType: 'application/pdf',
+      disposition: 'attachment',
+      content: new Uint8Array([1]),
+      ...overrides,
+    }) as Attachment;
+
+  it('counts an inline PDF (Apple Mail sends attachments this way)', () => {
+    expect(isRealAttachment(part({ disposition: 'inline', contentId: '<pdf1>' }))).toBe(true);
+  });
+
+  it('skips images embedded in the HTML body', () => {
+    expect(
+      isRealAttachment(part({ mimeType: 'image/png', disposition: 'inline', related: true })),
+    ).toBe(false);
+  });
+
+  it('counts a regular attachment', () => {
+    expect(isRealAttachment(part({}))).toBe(true);
   });
 });
