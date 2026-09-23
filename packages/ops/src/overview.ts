@@ -2,7 +2,7 @@ import { ALERT_RULES, ALERT_WINDOW_MINUTES, type AlertRule } from './alert-rules
 import { logsTable, metricsTable, type ServiceUrls } from './catalog.ts';
 import { checkHealth, type HealthCheck } from './health.ts';
 import { createIntakeOpsClient, type AttentionLead } from './intake-client.ts';
-import { QUERIES, toDirectSql } from './metrics.ts';
+import { DIRECT_SOURCE, QUERIES, toDirectSql } from './metrics.ts';
 import { createQueryClient, type QueryClient, type QueryConnection } from './query-client.ts';
 import { readStatusPage, type StatusPage } from './status-page.ts';
 
@@ -92,7 +92,7 @@ async function alertState(query: QueryClient, rule: AlertRule): Promise<AlertSta
 async function stats24h(query: QueryClient): Promise<Stats24h> {
   const run = <Row>(name: keyof typeof QUERIES, bucketSeconds?: number) =>
     query<Row>(
-      toDirectSql(QUERIES[name].sql(metricsTable), {
+      toDirectSql(QUERIES[name].sql(DIRECT_SOURCE), {
         hours: 24,
         ...(bucketSeconds && { bucketSeconds }),
       }),

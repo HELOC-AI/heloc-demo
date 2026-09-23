@@ -242,7 +242,16 @@ if (process.argv.includes('--alerts')) {
     });
     const alert = existingAlerts.find((a) => a.attributes.name === spec.alert);
     if (alert) {
-      console.log(`  alert "${spec.alert}" exists (id ${alert.id}); emails the team`);
+      // The alert keeps its own copy of the source list; converge it with the exploration's.
+      const watched = `source:${[...SERVICES, 'email-inbound'].map((svc) => `${PROJECT}_${svc.replace(/-/g, '_')}`).join(',')}`;
+      if (alert.attributes.source_variable !== watched) {
+        await api('PATCH', `https://telemetry.betterstack.com/api/v2/alerts/${alert.id}`, {
+          source_variable: watched,
+        });
+      }
+      console.log(
+        `  alert "${spec.alert}" exists (id ${alert.id}); watches all 5 sources; emails the team`,
+      );
       continue;
     }
     const created = (await api(
