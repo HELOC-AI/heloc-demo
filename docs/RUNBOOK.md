@@ -8,15 +8,15 @@
 
 ## 0. 服务地图
 
-| 服务                      | 公网地址                                                          | 部署在                                  | 代码                  |
-| ------------------------- | ----------------------------------------------------------------- | --------------------------------------- | --------------------- |
-| web（问卷 + 结果页）      | https://heloc-demo.vercel.app                                     | Vercel                                  | `apps/web`            |
-| intake（Lead Intake API） | https://intake-production-12aa.up.railway.app                     | Railway `intake`                        | `apps/intake`         |
-| figure-mock（预审）       | https://figure-mock-production.up.railway.app                     | Railway `figure-mock`                   | `apps/figure-mock`    |
-| chase（补材料通知）       | https://chase-production-4070.up.railway.app                      | Railway `chase`                         | `apps/chase`          |
-| email（邮件投递）         | https://email-production-48c5.up.railway.app                      | Railway `email`                         | `apps/email`          |
-| email-inbound（收信）     | 无 HTTP 入口：Cloudflare Email Routing `reply@linkerclaw.ai` 规则 | Cloudflare Worker `heloc-email-inbound` | `apps/email-inbound`  |
-| 数据库                    | Supabase 项目 `jtamjurbiyenwkqjwlsl`（us-east-2，session pooler） | Supabase                                | `apps/intake/drizzle` |
+| 服务                      | 公网地址                                                          | 部署在                                  | 代码                                                                            |
+| ------------------------- | ----------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| web（问卷 + 结果页）      | https://heloc-demo.vercel.app                                     | Vercel                                  | `apps/web`                                                                      |
+| intake（Lead Intake API） | https://intake-production-12aa.up.railway.app                     | Railway `intake`                        | `apps/intake`                                                                   |
+| figure-mock（预审）       | https://figure-mock-production.up.railway.app                     | Railway `figure-mock`                   | `apps/figure-mock`                                                              |
+| chase（补材料通知）       | https://chase-production-4070.up.railway.app                      | Railway `chase`                         | `apps/chase`                                                                    |
+| email（邮件投递）         | https://email-production-48c5.up.railway.app                      | Railway `email`                         | 独立仓库 [heloc-email-service](https://github.com/HELOC-AI/heloc-email-service) |
+| email-inbound（收信）     | 无 HTTP 入口：Cloudflare Email Routing `reply@linkerclaw.ai` 规则 | Cloudflare Worker `heloc-email-inbound` | `apps/email-inbound`                                                            |
+| 数据库                    | Supabase 项目 `jtamjurbiyenwkqjwlsl`（us-east-2，session pooler） | Supabase                                | `apps/intake/drizzle`                                                           |
 
 | 看哪里                                                             | 地址                                                                                         |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
@@ -44,7 +44,8 @@ web → intake → figure-mock（软查询 / Document Review）
 
 | 组件                                             | 怎么部署                                                                                      | 备注                                                          |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| intake / figure-mock / chase / email             | 合并 `main`，Railway 按 `watchPatterns` 只重建改动的服务                                      | 启动命令 `node apps/<svc>/src/main.ts`，无构建步骤            |
+| intake / figure-mock / chase                     | 合并 `main`，Railway 按 `watchPatterns` 只重建改动的服务                                      | 启动命令 `node apps/<svc>/src/main.ts`，无构建步骤            |
+| email（独立仓库 heloc-email-service）            | 合并该仓库的 `main`，Railway 用它的 `Dockerfile` 构建                                         | 变量仍由本仓库管理（IaC + `env-sync --railway`）              |
 | 数据库迁移                                       | 随 intake 部署自动执行（Railway pre-deploy：`node apps/intake/scripts/migrate.ts`）           | 迁移失败则新版本不上线，旧版本继续服务                        |
 | web                                              | 合并 `main` → Vercel 自动部署                                                                 | `NEXT_PUBLIC_API_URL` 构建时写入；改了要重新部署              |
 | email-inbound Worker                             | `cd apps/email-inbound && npx wrangler deploy`（token 见 CONFIGURATION §2.8）                 | 不随 `main` 自动部署                                          |

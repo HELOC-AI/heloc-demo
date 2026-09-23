@@ -16,7 +16,11 @@ import { readRootEnv, requireVar, SERVICES, servicePrefix, type Service } from '
 
 const env = readRootEnv();
 
-/** Un-prefixed root keys that belong to exactly one service. */
+/**
+ * Un-prefixed root keys that belong to exactly one service. `email` is the Railway service
+ * built from HELOC-AI/heloc-email-service; its variables are still managed from here.
+ * Locally, run that repo on :4003 (its own .env) for chase to call.
+ */
 const SHARED_SECRETS: Record<Service, string[]> = {
   intake: ['DATABASE_URL'],
   'figure-mock': [],
@@ -108,14 +112,6 @@ function writeLocal() {
       EMAIL_SERVICE_URL: 'http://localhost:4003',
       EMAIL_SERVICE_API_KEY: key('EMAIL__INTERNAL_API_KEY'),
       CHASE_REPLY_ADDRESS: 'reply@linkerclaw.ai',
-    },
-    email: {
-      ...common,
-      PORT: '4003',
-      ...withoutBetterStack(secretsFor('email')),
-      // Log instead of sending; set to `resend` to deliver real mail from local.
-      EMAIL_PROVIDER: 'console',
-      EMAIL_FROM: key('EMAIL_FROM'),
     },
     web: { NEXT_PUBLIC_API_URL: 'http://localhost:4000', ...webSecrets() },
   };

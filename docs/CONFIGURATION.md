@@ -1,6 +1,6 @@
 # 配置与 Secret 管理设计
 
-> 适用范围：`heloc-demo` monorepo 内全部服务（web / intake / figure-mock / chase / email）。
+> 适用范围：`heloc-demo` monorepo 内全部服务（web / intake / figure-mock / chase），以及独立仓库 `heloc-email-service` 部署出的 Railway 服务 `email`——它的变量同样由本仓库管理。
 > 原则：**Secret 只存在于真正需要它的 Service；仓库里只提交变量名，永不提交值。**
 
 ---
@@ -77,7 +77,7 @@
 | `EMAIL_SERVICE_API_KEY` | 🔒   | 调 email 的内部 key  | `${{email.INTERNAL_API_KEY}}`              |
 | `BETTERSTACK_*`         | 同上 | 日志 / 异常          | 同上                                       |
 
-### 2.4 email-service（Railway，`apps/email`）
+### 2.4 email-service（Railway，独立仓库 `heloc-email-service`）
 
 | 变量               | 类型 | 用途                | 来源 / 取值                                                           |
 | ------------------ | ---- | ------------------- | --------------------------------------------------------------------- |
@@ -198,7 +198,7 @@ cp apps/intake/.env.example apps/intake/.env   # 从密码管理器填值
 pnpm --filter @heloc/intake dev                # node --watch --env-file-if-exists=.env src/main.ts
 ```
 
-本地端口：web 3000、intake 4000、figure-mock 4001、chase 4002、email 4003（`.env.example` 已按此填好互相的 URL）。email 本地可设 `EMAIL_PROVIDER=console`，不需要 Resend key。
+本地端口：web 3000、intake 4000、figure-mock 4001、chase 4002、email 4003（`.env.example` 已按此填好互相的 URL）。email 在独立仓库 heloc-email-service 里启动，本地可设 `EMAIL_PROVIDER=console`，不需要 Resend key。
 本地默认指向本地起的 figure-mock / chase，`DATABASE_URL` 可以指向 Supabase 上单独建的 dev 数据库或本地 Postgres；单元 / 集成测试用 PGlite（内存 Postgres），**不需要任何 secret**。
 
 ---

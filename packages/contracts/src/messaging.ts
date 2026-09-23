@@ -27,7 +27,9 @@ export type ChaseResponse = z.infer<typeof chaseResponseSchema>;
 
 export const chaseIdempotencyKey = (chaseId: string) => `chase:${chaseId}`;
 
-// chase → email
+// chase → Email Service. The Email Service (github.com/HELOC-AI/heloc-email-service) owns
+// this contract; this is the consumer's copy. Keep it in step with that repo's
+// src/interface/http/contract.ts.
 
 export const sendEmailRequestSchema = z.object({
   to: z.email(),

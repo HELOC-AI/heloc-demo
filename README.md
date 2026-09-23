@@ -32,14 +32,14 @@ Borrower ─► web (Next.js, Vercel)
                  └──► /ops 页面 与 pnpm ops（packages/ops 汇总同一份数据）
 ```
 
-| 服务          | 限界上下文                   | 目录                 | 部署              |
-| ------------- | ---------------------------- | -------------------- | ----------------- |
-| web           | —                            | `apps/web`           | Vercel            |
-| intake        | Lead Intake（核心域）        | `apps/intake`        | Railway           |
-| figure-mock   | Prequalification             | `apps/figure-mock`   | Railway           |
-| chase         | Borrower Outreach            | `apps/chase`         | Railway           |
-| email         | Email Delivery               | `apps/email`         | Railway           |
-| email-inbound | Email Delivery（收信适配器） | `apps/email-inbound` | Cloudflare Worker |
+| 服务          | 限界上下文                   | 目录                                                                                | 部署                  |
+| ------------- | ---------------------------- | ----------------------------------------------------------------------------------- | --------------------- |
+| web           | —                            | `apps/web`                                                                          | Vercel                |
+| intake        | Lead Intake（核心域）        | `apps/intake`                                                                       | Railway               |
+| figure-mock   | Prequalification             | `apps/figure-mock`                                                                  | Railway               |
+| chase         | Borrower Outreach            | `apps/chase`                                                                        | Railway               |
+| email         | Email Delivery               | **独立仓库** [heloc-email-service](https://github.com/HELOC-AI/heloc-email-service) | Railway（Dockerfile） |
+| email-inbound | Email Delivery（收信适配器） | `apps/email-inbound`                                                                | Cloudflare Worker     |
 
 每个后端都分为 `domain / application / infrastructure / interface` 四层，依赖只能向内，由 ESLint 强制。共享包：`packages/contracts`（跨服务 Zod 契约）、`config`（启动时校验环境变量）、`logger`（结构化日志 + 脱敏）、`server-kit`（Fastify 基础设施）、`ops`（运维上下文：健康检查、告警规则、看板 SQL、日志查询，供 `/ops`、`pnpm ops` 与 setup 脚本共用）。
 
@@ -50,10 +50,10 @@ Borrower ─► web (Next.js, Vercel)
 ```bash
 pnpm install
 node scripts/env-sync.ts --local   # 从仓库根 .env 生成各 app 的 .env（或手动复制各 app 的 .env.example）
-pnpm dev                           # web :3000 · intake :4000 · figure-mock :4001 · chase :4002 · email :4003
+pnpm dev                           # web :3000 · intake :4000 · figure-mock :4001 · chase :4002
 ```
 
-本地 email 默认 `EMAIL_PROVIDER=console`，只打印不发信。
+chase 调用的 Email Service 在独立仓库：`git clone git@github.com:HELOC-AI/heloc-email-service.git`，在那里 `pnpm dev` 起在 :4003（默认 `EMAIL_PROVIDER=console`，只打印不发信）。
 
 | 命令                                                                         | 作用                                                                                 |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |

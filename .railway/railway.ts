@@ -12,9 +12,18 @@
 import { defineRailway, github, preserve, project, service } from 'railway/iac';
 
 const REPO = 'HELOC-AI/heloc-demo';
+/** The Email Service lives in its own repository (spec §12.1 / §17.2, ADR-0005). */
+const EMAIL_REPO = 'HELOC-AI/heloc-email-service';
 // Virginia (iad): closest Railway region to the Supabase project (us-east-2).
 const REGION = 'iad';
 const WEB_ORIGIN = 'https://heloc-demo.vercel.app';
+
+const deployDefaults = {
+  healthcheckPath: '/health',
+  healthcheckTimeout: 60,
+  restartPolicyType: 'ON_FAILURE' as const,
+  restartPolicyMaxRetries: 5,
+};
 
 /** Shared build/deploy shape: pnpm workspace at repo root, TypeScript run natively by Node. */
 function app(name: string, domain: string, options: { preDeploy?: string } = {}) {
@@ -28,10 +37,7 @@ function app(name: string, domain: string, options: { preDeploy?: string } = {})
     deploy: {
       startCommand: `node apps/${name}/src/main.ts`,
       ...(options.preDeploy && { preDeployCommand: [options.preDeploy] }),
-      healthcheckPath: '/health',
-      healthcheckTimeout: 60,
-      restartPolicyType: 'ON_FAILURE' as const,
-      restartPolicyMaxRetries: 5,
+      ...deployDefaults,
     },
     // Railway places new services in sfo; move the single replica next to the database.
     regions: { [REGION]: 1 },
@@ -46,8 +52,14 @@ const betterStack = {
 };
 
 export default defineRailway(() => {
+  // Built from its own repository's Dockerfile; same service, domain and variables as before,
+  // so chase's references below are unchanged.
   const email = service('email', {
-    ...app('email', 'email-production-48c5.up.railway.app'),
+    source: github(EMAIL_REPO, { branch: 'main' }),
+    build: { builder: 'DOCKERFILE', dockerfilePath: 'Dockerfile' },
+    deploy: deployDefaults,
+    regions: { [REGION]: 1 },
+    networking: { serviceDomains: { 'email-production-48c5.up.railway.app': {} } },
     env: {
       ...betterStack,
       INTERNAL_API_KEY: preserve(),

@@ -3,7 +3,7 @@
 Cloudflare Email Worker (`heloc-email-inbound`) that receives borrower replies to Chase
 emails and forwards them to Lead Intake as an **Inbound Email** (see
 [ADR-0004](../../docs/adr/0004-chase-replies-resolve-need-more-documents.md) and
-[`apps/email/CONTEXT.md`](../email/CONTEXT.md)).
+[CONTEXT.md](./CONTEXT.md)).
 
 ## What it does
 
