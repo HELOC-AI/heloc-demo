@@ -4,6 +4,7 @@ import {
   type Chase,
   type ChaseDelivery,
   type CreditProfile,
+  type FinalOutcome,
   type IncomingReply,
   type LeadEvent,
   type LeadEventType,
@@ -45,10 +46,10 @@ export interface SubmitLeadInput {
 }
 
 /**
- * Aggregate root of Lead Intake. Owns its single Prequal Decision, its single Chase, and —
- * after the borrower replies with documents — its single Document Review and Outcome
- * Notice (ADR-0003, ADR-0004). Every state change goes through a command that checks its
- * precondition and records a Lead Event.
+ * Aggregate root of Lead Intake. Owns its single Prequal Decision, its single Chase, its
+ * single Document Review once the borrower replies with documents, and the single Outcome
+ * Notice that tells the borrower the final outcome (ADR-0003, ADR-0004, ADR-0006). Every
+ * state change goes through a command that checks its precondition and records a Lead Event.
  */
 export class Lead {
   #state: LeadSnapshot;
@@ -118,12 +119,24 @@ export class Lead {
   nextStep(): NextStep {
     const { decision, chase, review, notice } = this.#state;
     if (!decision) return 'prequalify';
-    if (decision.outcome !== 'need_more_documents') return 'done';
-    if (chase?.status !== 'sent') return 'chase';
-    if (!chase.reply) return 'done'; // waiting for the borrower's documents
-    if (!review) return 'review';
+    if (decision.outcome === 'need_more_documents') {
+      if (chase?.status !== 'sent') return 'chase';
+      if (!chase.reply) return 'done'; // waiting for the borrower's documents
+      if (!review) return 'review';
+    }
     if (notice?.status !== 'sent') return 'notify';
     return 'done';
+  }
+
+  /**
+   * The outcome the borrower is told: the Document Review's when there is one, else the
+   * soft pull's. Undefined while documents are still outstanding.
+   */
+  get finalOutcome(): FinalOutcome | undefined {
+    const { decision, review } = this.#state;
+    if (review) return review;
+    if (!decision || decision.outcome === 'need_more_documents') return undefined;
+    return decision;
   }
 
   /**
@@ -202,7 +215,7 @@ export class Lead {
 
   openNotice(noticeId: string, now: Date): void {
     if (this.nextStep() !== 'notify') {
-      throw new DomainError('notice_not_due', 'An Outcome Notice follows a Document Review');
+      throw new DomainError('notice_not_due', 'An Outcome Notice follows the final outcome');
     }
     if (this.#state.notice) throw new DomainError('notice_exists', 'A Lead has one Outcome Notice');
     this.#state.notice = { id: noticeId, status: 'pending' };
@@ -213,8 +226,8 @@ export class Lead {
   markNoticeSent(delivery: NoticeDelivery, now: Date): void {
     const notice = this.#requireUnsentNotice();
     Object.assign(notice, { ...delivery, status: 'sent', lastError: undefined });
-    // Back to the review's outcome if an earlier attempt had failed the Lead.
-    this.#transition(this.#state.review!.outcome, now);
+    // Back to the final outcome if an earlier attempt had failed the Lead.
+    this.#transition(this.finalOutcome!.outcome, now);
     this.#record(
       'notice.sent',
       { notice_id: notice.id, email_message_id: delivery.emailMessageId },

@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { leadApi } from '@/lib/api';
 import { ApplicationDetails } from './application-details';
 import {
+  decisionContext,
   DocumentsCard,
   DocumentsReceivedCard,
   FailedCard,
@@ -14,7 +15,6 @@ import {
   OfferCard,
   PendingCard,
   RejectedCard,
-  reviewContext,
   StartOverLink,
   type Watch,
 } from './status-cards';
@@ -105,12 +105,12 @@ function StatusCard({
   switch (lead.status) {
     case 'approved':
       return lead.offer ? (
-        <OfferCard offer={lead.offer} review={reviewContext(lead)} />
+        <OfferCard offer={lead.offer} context={decisionContext(lead)} />
       ) : (
         <PendingCard stalled onCheckAgain={watch.onCheckAgain} />
       );
     case 'rejected':
-      return <RejectedCard reason={lead.reason} review={reviewContext(lead)} />;
+      return <RejectedCard reason={lead.reason} context={decisionContext(lead)} />;
     case 'need_more_documents':
     case 'chase_sent':
       return <DocumentsCard lead={lead} watch={watch} />;
@@ -123,9 +123,9 @@ function StatusCard({
           {/* Failing to send the Outcome Notice doesn't undo the decision: show it. */}
           {lead.failed_step === 'notify' &&
             (lead.offer ? (
-              <OfferCard offer={lead.offer} review={reviewContext(lead)} />
+              <OfferCard offer={lead.offer} context={decisionContext(lead)} />
             ) : (
-              lead.reason && <RejectedCard reason={lead.reason} review={reviewContext(lead)} />
+              lead.reason && <RejectedCard reason={lead.reason} context={decisionContext(lead)} />
             ))}
         </>
       );

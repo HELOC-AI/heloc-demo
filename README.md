@@ -2,7 +2,7 @@
 
 HELOC（房屋净值信用额度）申请的端到端垂直切片，全部在线上运行：
 
-**问卷 → Lead Intake → Figure 软查询（mock）→ 需补材料时自动 Chase 邮件 → 借款人直接回信补材料 → Figure 审核 → 结果邮件**
+**问卷 → Lead Intake → Figure 软查询（mock）→ 通过 / 拒绝直接发结果邮件；需补材料时自动 Chase 邮件 → 借款人直接回信补材料 → Figure 审核 → 结果邮件**（结果邮件都带 Offer 详情页链接）
 
 真实部署（Vercel + Railway）、真实落库（Supabase）、真实投递（Resend），收信走 Cloudflare Email Routing；Better Stack 负责健康检查、日志、异常、看板与告警；任何一步失败都能 Replay。
 
@@ -61,7 +61,7 @@ chase 调用的 Email Service 在独立仓库：`git clone git@github.com:HELOC-
 | `pnpm lint` / `pnpm typecheck` / `pnpm format:check`                         | 静态检查（含 DDD 分层规则）                                                          |
 | `pnpm check:env`                                                             | 校验每个 app 的 `.env.example` 与 env schema 一致                                    |
 | `pnpm check:contracts`                                                       | 校验 chase 使用的 Send API 契约副本与 heloc-email-service 发布的一致                 |
-| `pnpm smoke`                                                                 | 对线上服务跑冒烟测试（不发邮件）                                                     |
+| `pnpm smoke`                                                                 | 对线上服务跑冒烟测试（结果邮件只发到 Resend 测试收件箱）                             |
 | `pnpm ops [status\|alerts\|errors\|attention\|lead\|logs\|replay\|incident]` | 运维命令行（见 [RUNBOOK §5.1](docs/RUNBOOK.md)）                                     |
 
 后端没有构建步骤：Node 直接运行 TypeScript（`node src/main.ts`）。

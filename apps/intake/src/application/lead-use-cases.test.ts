@@ -70,13 +70,51 @@ describe('submitLead', () => {
   it.each([
     [approved, 'approved', 'figure.approved'],
     [rejected, 'rejected', 'figure.rejected'],
-  ] as const)('%o ends %s without a chase', async (decision, status, event) => {
-    setup(decision);
-    const lead = await submit();
-    expect(lead.status).toBe(status);
-    expect(chases.calls).toHaveLength(0);
-    expect(eventTypes(lead.id)).toEqual(['lead.created', 'figure.requested', event]);
-    expect(leads.rawResponses.get(lead.id)).toEqual({ fake: true, outcome: decision.outcome });
+  ] as const)(
+    '%o ends %s and emails the outcome, without a chase',
+    async (decision, status, event) => {
+      setup(decision);
+      const lead = await submit();
+      expect(lead.status).toBe(status);
+      expect(chases.calls).toHaveLength(0);
+      expect(notices.calls).toEqual([
+        {
+          noticeId: 'id-2',
+          leadId: 'id-1',
+          borrowerName: 'John Doe',
+          borrowerEmail: 'john@example.com',
+          outcome: decision,
+          basis: 'prequalification',
+          resultUrl: 'https://heloc-demo.vercel.app/result/id-1',
+        },
+      ]);
+      expect(lead.notice).toMatchObject({ status: 'sent', emailMessageId: 'notice_email_1' });
+      expect(eventTypes(lead.id)).toEqual([
+        'lead.created',
+        'figure.requested',
+        event,
+        'notice.created',
+        'notice.sent',
+      ]);
+      expect(leads.rawResponses.get(lead.id)).toEqual({ fake: true, outcome: decision.outcome });
+    },
+  );
+
+  it('keeps the decision when its email fails; Replay sends it exactly once', async () => {
+    setup(approved);
+    notices.failWith = new Error('chase: HTTP 502');
+    const failed = await submit();
+    expect(failed.status).toBe('failed');
+    expect(failed.decision).toEqual(approved);
+    expect(failed.nextStep()).toBe('notify');
+    expect(eventTypes(failed.id).slice(-2)).toEqual(['notice.failed', 'lead.failed']);
+
+    notices.failWith = undefined;
+    const lead = await replay(failed.id);
+    expect(lead.status).toBe('approved');
+    expect(prequal.calls).toHaveLength(1);
+    expect(new Set(notices.calls.map((c) => c.noticeId))).toEqual(new Set(['id-2']));
+    expect(notices.delivered.size).toBe(1);
   });
 
   it('chases a Need More Documents Lead automatically', async () => {
@@ -151,6 +189,13 @@ describe('submitLead', () => {
       { lead_id: lead.id, event: 'lead.created' },
       { lead_id: lead.id, event: 'figure.requested' },
       { lead_id: lead.id, event: 'figure.approved', amount: 150_000, apr_min: 7.5 },
+      { lead_id: lead.id, event: 'notice.created', notice_id: 'id-2' },
+      {
+        lead_id: lead.id,
+        event: 'notice.sent',
+        notice_id: 'id-2',
+        email_message_id: 'notice_email_1',
+      },
     ]);
   });
 });
@@ -207,6 +252,8 @@ describe('getLead', () => {
       'lead.created',
       'figure.requested',
       'figure.approved',
+      'notice.created',
+      'notice.sent',
     ]);
   });
 });
@@ -272,6 +319,7 @@ describe('chase reply → document review → outcome notice', () => {
       expect.objectContaining({
         borrowerEmail: 'john@example.com',
         outcome: prequal.nextReview,
+        basis: 'document_review',
         resultUrl: `https://heloc-demo.vercel.app/result/${lead.id}`,
       }),
     ]);
@@ -340,5 +388,19 @@ describe('leadsNeedingAttention', () => {
 
     const views = await useCases.leadsNeedingAttention();
     expect(views.map((v) => v.lead.id).sort()).toEqual([failed.id, stuck.id].sort());
+  });
+
+  it('lists a decided Lead whose Outcome Notice never went out (crash mid-send)', async () => {
+    setup(approved);
+    const lead = await submit();
+    const snapshot = leads.snapshots.get(lead.id)!;
+    leads.snapshots.set(lead.id, {
+      ...snapshot,
+      notice: { id: snapshot.notice!.id, status: 'pending' },
+      updatedAt: new Date('2026-09-22T23:00:00Z'),
+    });
+
+    const views = await useCases.leadsNeedingAttention();
+    expect(views.map((v) => v.lead.id)).toEqual([lead.id]);
   });
 });

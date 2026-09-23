@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, inArray, lt, or, sql } from 'drizzle-orm';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import type { LeadTimeline, RecordedLeadEvent } from '../../application/ports.ts';
 import {
@@ -202,6 +202,22 @@ export class DrizzleLeadRepository implements LeadRepository, LeadTimeline {
           and(
             inArray(schema.leads.status, ['submitted', 'processing', 'documents_received']),
             lt(schema.leads.updatedAt, stuckBefore),
+          ),
+          // Decided, but the Outcome Notice was opened and never sent (crash mid-send).
+          and(
+            inArray(schema.leads.status, ['approved', 'rejected']),
+            lt(schema.leads.updatedAt, stuckBefore),
+            exists(
+              this.#db
+                .select({ one: sql`1` })
+                .from(schema.outcomeNotices)
+                .where(
+                  and(
+                    eq(schema.outcomeNotices.leadId, schema.leads.id),
+                    eq(schema.outcomeNotices.status, 'pending'),
+                  ),
+                ),
+            ),
           ),
         ),
       )

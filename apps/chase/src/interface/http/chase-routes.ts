@@ -88,12 +88,18 @@ export function chaseRoutes(
                 },
               }
             : { status: 'rejected', reason: outcome.reason },
+        basis: body.basis,
         resultUrl: body.result_url,
         requestId: request.id,
       }),
     );
     log.info(
-      { event: 'notice.sent', outcome: outcome.status, email_message_id: sent.messageId },
+      {
+        event: 'notice.sent',
+        outcome: outcome.status,
+        basis: body.basis,
+        email_message_id: sent.messageId,
+      },
       'outcome notice sent',
     );
 

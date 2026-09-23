@@ -59,6 +59,9 @@ export class InMemoryLeads implements LeadRepository, LeadTimeline {
         (s) =>
           s.status === 'failed' ||
           (['submitted', 'processing', 'documents_received'].includes(s.status) &&
+            s.updatedAt < stuckBefore) ||
+          (['approved', 'rejected'].includes(s.status) &&
+            s.notice?.status === 'pending' &&
             s.updatedAt < stuckBefore),
       )
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())

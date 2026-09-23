@@ -1,5 +1,6 @@
 import type {
   ChaseDelivery,
+  FinalOutcome,
   LeadEvent,
   MissingDocument,
   NoticeDelivery,
@@ -82,8 +83,10 @@ export interface NoticeRequest {
   leadId: string;
   borrowerName: string;
   borrowerEmail: string;
-  outcome: ReviewDecision;
-  /** Link to the borrower's result page. */
+  outcome: FinalOutcome;
+  /** Which step decided the outcome, so the email can say how we got there. */
+  basis: 'prequalification' | 'document_review';
+  /** Link to the borrower's result page, which shows the offer. */
   resultUrl: string;
 }
 
@@ -100,7 +103,8 @@ export interface LeadTimeline {
   eventsFor(leadId: string): Promise<RecordedLeadEvent[]>;
   /**
    * Leads an operator should look at: `failed`, or stuck mid-pipeline (not updated since
-   * `stuckBefore` while a step is still running). Newest first.
+   * `stuckBefore` while a step — including sending the Outcome Notice — is still running).
+   * Newest first.
    */
   needingAttention(stuckBefore: Date, limit: number): Promise<string[]>;
 }

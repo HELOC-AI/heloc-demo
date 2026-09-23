@@ -34,17 +34,17 @@ section before acting on anything it covers.
 `scripts/ops.ts` shows the same data as the public page https://heloc-demo.vercel.app/ops, plus
 what needs admin credentials. Start every investigation with it.
 
-| Question                                    | Command                                                           |
-| ------------------------------------------- | ----------------------------------------------------------------- |
-| Is everything up? What's alerting?          | `pnpm ops`                                                        |
-| What fired recently / is still open?        | `pnpm ops alerts` (rules + Better Stack incidents)                |
-| What errors, where, how often?              | `pnpm ops errors [--hours 72]`                                    |
-| Which Leads are failed or stuck?            | `pnpm ops attention`                                              |
-| What happened to this Lead?                 | `pnpm ops lead <lead_id>`                                         |
-| Every log line for a request / Lead / chase | `pnpm ops logs <request_id\|lead_id\|chase_id> [--hours N]`       |
-| Resume a failed or stuck Lead               | `pnpm ops replay <lead_id>` (asks; `--yes` after the user agreed) |
-| Acknowledge / resolve an incident           | `pnpm ops incident ack\|resolve <id>` (asks)                      |
-| Did the deploy work?                        | `pnpm ops smoke` (= `pnpm smoke`, sends no email)                 |
+| Question                                    | Command                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------- |
+| Is everything up? What's alerting?          | `pnpm ops`                                                                       |
+| What fired recently / is still open?        | `pnpm ops alerts` (rules + Better Stack incidents)                               |
+| What errors, where, how often?              | `pnpm ops errors [--hours 72]`                                                   |
+| Which Leads are failed or stuck?            | `pnpm ops attention`                                                             |
+| What happened to this Lead?                 | `pnpm ops lead <lead_id>`                                                        |
+| Every log line for a request / Lead / chase | `pnpm ops logs <request_id\|lead_id\|chase_id> [--hours N]`                      |
+| Resume a failed or stuck Lead               | `pnpm ops replay <lead_id>` (asks; `--yes` after the user agreed)                |
+| Acknowledge / resolve an incident           | `pnpm ops incident ack\|resolve <id>` (asks)                                     |
+| Did the deploy work?                        | `pnpm ops smoke` (= `pnpm smoke`; outcome emails go to Resend's test inbox only) |
 
 Sections degrade independently: an `unavailable:` line names the missing credential or failing
 dependency — that is itself a finding.

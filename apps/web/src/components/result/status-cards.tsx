@@ -90,7 +90,7 @@ export function StartOverLink({ children = 'Start a new application' }: { childr
   );
 }
 
-export function OfferCard({ offer, review }: { offer: Offer; review?: ReviewContext | undefined }) {
+export function OfferCard({ offer, context }: { offer: Offer; context: DecisionContext }) {
   const terms = [
     { label: 'APR range', value: formatAprRange(offer.apr_min, offer.apr_max) },
     { label: 'Term', value: formatTerm(offer.term_months) },
@@ -108,11 +108,11 @@ export function OfferCard({ offer, review }: { offer: Offer; review?: ReviewCont
   return (
     <Card>
       <CardHeader tone="success" title="You're prequalified">
-        {review
+        {context.documentsReceivedAt
           ? 'Good news: Figure reviewed your documents, and here is the line of credit you could open.'
           : 'Good news: based on what you told us, here is the line of credit you could open.'}
       </CardHeader>
-      {review && <ReviewNote review={review} />}
+      <DecisionNote context={context} />
 
       <div className="mt-8 overflow-hidden rounded-xl border border-emerald-200">
         <div className="bg-emerald-50/70 px-5 py-6 sm:px-6">
@@ -151,30 +151,32 @@ export function OfferCard({ offer, review }: { offer: Offer; review?: ReviewCont
   );
 }
 
-/** Context for a decision made in a Document Review, rather than from the soft pull alone. */
-export interface ReviewContext {
-  /** When the Borrower's documents arrived. */
-  receivedAt: string;
+/** How a decision was reached, and whether the Borrower also has it by email. */
+export interface DecisionContext {
+  /** When the Borrower's documents arrived, if a Document Review made the decision. */
+  documentsReceivedAt?: string | undefined;
   /** The Outcome Notice email has gone out. */
   emailed: boolean;
 }
 
-export function reviewContext(lead: LeadResult): ReviewContext | undefined {
-  if (!lead.documents_received) return undefined;
+export function decisionContext(lead: LeadResult): DecisionContext {
   return {
-    receivedAt: lead.documents_received.received_at,
+    documentsReceivedAt: lead.documents_received?.received_at,
     emailed: lead.notice?.status === 'sent',
   };
 }
 
-function ReviewNote({ review }: { review: ReviewContext }) {
+function DecisionNote({ context }: { context: DecisionContext }) {
+  if (!context.documentsReceivedAt && !context.emailed) return null;
   return (
     <ul className="mt-5 flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:flex-wrap sm:gap-x-6">
-      <li className="flex items-start gap-2">
-        <DocumentIcon className="mt-0.5 size-4 shrink-0 text-slate-400" />
-        Based on the documents you sent on {formatDate(review.receivedAt)}
-      </li>
-      {review.emailed && (
+      {context.documentsReceivedAt && (
+        <li className="flex items-start gap-2">
+          <DocumentIcon className="mt-0.5 size-4 shrink-0 text-slate-400" />
+          Based on the documents you sent on {formatDate(context.documentsReceivedAt)}
+        </li>
+      )}
+      {context.emailed && (
         <li className="flex items-start gap-2">
           <MailIcon className="mt-0.5 size-4 shrink-0 text-slate-400" />
           We&apos;ve emailed you the result
@@ -186,20 +188,20 @@ function ReviewNote({ review }: { review: ReviewContext }) {
 
 export function RejectedCard({
   reason,
-  review,
+  context,
 }: {
   reason?: RejectionReason | undefined;
-  review?: ReviewContext | undefined;
+  context: DecisionContext;
 }) {
   const explanation = rejectionExplanation(reason);
   return (
     <Card>
       <CardHeader tone="neutral" title="We can't offer you a line of credit right now">
-        {review
+        {context.documentsReceivedAt
           ? 'Thanks for sending your documents. Figure has reviewed them, and here is what we found.'
           : 'Thanks for checking with us. Here is what we found.'}
       </CardHeader>
-      {review && <ReviewNote review={review} />}
+      <DecisionNote context={context} />
       <div className="mt-6 rounded-xl bg-slate-50 px-5 py-4">
         <p className="font-medium text-slate-900">{explanation.title}</p>
         <p className="mt-1 text-sm text-slate-600">{explanation.body}</p>

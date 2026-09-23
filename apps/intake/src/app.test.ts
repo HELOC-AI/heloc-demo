@@ -131,12 +131,31 @@ describe('POST /v1/leads', () => {
     expect(body).toMatchObject({
       status: 'approved',
       offer: { amount: 150_000, apr_min: 7.5, expires_at: '2026-10-01T00:00:00.000Z' },
+      notice: { status: 'sent' },
     });
     expect(body.events?.map((e) => e.type)).toEqual([
       'lead.created',
       'figure.requested',
       'figure.approved',
+      'notice.created',
+      'notice.sent',
     ]);
+    expect(notices.calls[0]).toMatchObject({
+      basis: 'prequalification',
+      resultUrl: `${WEB}/result/${body.lead_id}`,
+    });
+  });
+
+  it('answers 502 with the offer when only the outcome email failed', async () => {
+    notices.failWith = new Error('chase: HTTP 503');
+    const res = await submit();
+    expect(res.statusCode).toBe(502);
+    expect(leadResultSchema.parse(res.json())).toMatchObject({
+      status: 'failed',
+      failed_step: 'notify',
+      offer: { amount: 150_000 },
+      notice: { status: 'failed' },
+    });
   });
 
   it('chases a Need More Documents Lead and reports the documents', async () => {

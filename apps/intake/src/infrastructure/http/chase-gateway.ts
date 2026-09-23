@@ -85,6 +85,7 @@ export class OutcomeNoticeHttpGateway implements NoticeGateway {
                 { status: 'rejected' }
               >['reason'],
             },
+      basis: request.basis,
       result_url: request.resultUrl,
     };
     const response = await this.#client.post('/v1/outcome-notices', body, {

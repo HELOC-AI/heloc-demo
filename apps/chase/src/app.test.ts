@@ -161,6 +161,28 @@ describe('POST /v1/outcome-notices', () => {
     });
   });
 
+  it('words the email for the step that decided: document review by default', async () => {
+    const app = build();
+    const send = (payload: object) =>
+      app.inject({ method: 'POST', url: '/v1/outcome-notices', headers: auth, payload });
+
+    expect((await send(notice)).statusCode).toBe(200);
+    expect((await send({ ...notice, basis: 'prequalification' })).statusCode).toBe(200);
+    expect(email.sent[0]?.message.text).toContain('We have reviewed them');
+    expect(email.sent[1]?.message.text).toContain("you're prequalified");
+    expect(email.sent[1]?.message.text).toContain(notice.result_url);
+  });
+
+  it('rejects an unknown basis', async () => {
+    const res = await build().inject({
+      method: 'POST',
+      url: '/v1/outcome-notices',
+      headers: auth,
+      payload: { ...notice, basis: 'gut_feeling' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('rejects an unknown rejection reason', async () => {
     const res = await build().inject({
       method: 'POST',

@@ -87,8 +87,8 @@ describe('Lead.submit', () => {
 
 describe('prequalification', () => {
   it.each([
-    [approved, 'approved', 'figure.approved', 'done'],
-    [rejected, 'rejected', 'figure.rejected', 'done'],
+    [approved, 'approved', 'figure.approved', 'notify'],
+    [rejected, 'rejected', 'figure.rejected', 'notify'],
     [needDocs, 'need_more_documents', 'figure.need_more_documents', 'chase'],
   ] as const)('records %o', (decision, status, event, next) => {
     const lead = decided(decision);
@@ -190,6 +190,11 @@ describe('failure and replay', () => {
 
   it('a completed Lead cannot fail, and replaying it changes nothing', () => {
     const lead = decided(rejected);
+    lead.openNotice('n1', t0);
+    lead.markNoticeSent(
+      { subject: 'An update', body: 'Hi John…', emailMessageId: 'email_n1', sentAt: t0 },
+      t0,
+    );
     expectDomainError(() => lead.fail('prequalify', 'x', t0), 'already_complete');
     lead.replay(t0);
     expect(lead.status).toBe('rejected');
@@ -358,8 +363,57 @@ describe('chase reply → document review → outcome notice', () => {
     expect(lead.notice?.lastError).toBeUndefined();
   });
 
-  it('a soft-pull approval never needs a notice', () => {
-    expect(decided(approved).nextStep()).toBe('done');
-    expectDomainError(() => decided(approved).openNotice('n1', t0), 'notice_not_due');
+  it('no notice while documents are still awaited', () => {
+    const lead = decided(needDocs);
+    expectDomainError(() => lead.openNotice('n1', t0), 'notice_not_due');
+    lead.openChase('c1', t0);
+    lead.markChaseSent(delivery, t0);
+    expectDomainError(() => lead.openNotice('n1', t0), 'notice_not_due');
+  });
+});
+
+describe('outcome notice after the soft pull', () => {
+  const noticeDelivery = {
+    subject: 'Your HELOC offer is ready',
+    body: 'Hi John…',
+    emailMessageId: 'email_n1',
+    sentAt: t0,
+  };
+
+  it.each([
+    [approved, 'approved'],
+    [rejected, 'rejected'],
+  ] as const)('tells the borrower about %o, once', (decision, status) => {
+    const lead = decided(decision);
+    expect(lead.nextStep()).toBe('notify');
+    lead.openNotice('n1', t0);
+    expectDomainError(() => lead.openNotice('n2', t0), 'notice_exists');
+    lead.markNoticeSent(noticeDelivery, t0);
+    expect(lead.status).toBe(status);
+    expect(lead.nextStep()).toBe('done');
+    expect(types(lead).slice(-2)).toEqual(['notice.created', 'notice.sent']);
+    expectDomainError(() => lead.markNoticeSent(noticeDelivery, t0), 'notice_sent');
+  });
+
+  it('a failed notice fails the Lead, resumes at notify and restores the decision', () => {
+    const lead = decided(approved);
+    lead.openNotice('n1', t0);
+    lead.markNoticeFailed('email down', t0);
+    expect(lead.status).toBe('failed');
+    expect(lead.decision).toEqual(approved);
+    expect(lead.nextStep()).toBe('notify');
+
+    lead.markNoticeSent(noticeDelivery, t0);
+    expect(lead.status).toBe('approved');
+    expect(lead.notice).toMatchObject({ status: 'sent', emailMessageId: 'email_n1' });
+  });
+
+  it('keeps PII out of the notice events', () => {
+    const lead = decided(approved);
+    lead.openNotice('n1', t0);
+    lead.markNoticeSent(noticeDelivery, t0);
+    const payloads = JSON.stringify(lead.pendingEvents());
+    expect(payloads).not.toContain('john@example.com');
+    expect(payloads).not.toContain('John Doe');
   });
 });

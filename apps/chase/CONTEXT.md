@@ -25,5 +25,5 @@ Chase Message 的回复地址，形如 `reply+<chase id>@linkerclaw.ai`；借款
 _Avoid_: Inbox、Upload address
 
 **Outcome Notice**:
-Document Review 出结论后发给借款人的一封信：通过则附报价摘要，拒绝则说明原因，并附结果页链接。
+Lead 得到最终结论后发给借款人的一封信，结论来自预审本身或 Document Review（ADR-0006）。通过则附报价摘要和 “View your offer” 按钮，拒绝则说明原因；都附结果页（Offer 详情）链接。措辞按结论来源区分，预审直接给出的结论不提材料。
 _Avoid_: Result email

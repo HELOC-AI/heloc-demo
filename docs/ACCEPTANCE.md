@@ -67,5 +67,6 @@
 - 借款人**直接回复邮件补材料** → Figure 审核材料 → 结果邮件（ADR-0004），邮件内有一键回复按钮
 - DDD 分层并由 lint 强制；379+ 个自动化测试（含 4 个服务真实 HTTP 串联的 e2e）
 - 基础设施即代码：Railway IaC、Better Stack 监控 / 告警 / 看板 / 状态页脚本；secret 统一由 `env-sync` 分发
-- 每 6 小时运行的线上冒烟（GitHub Actions，不发邮件）
+- 每 6 小时运行的线上冒烟（GitHub Actions；结果邮件只发到 Resend 测试收件箱）
+- 预审直接通过 / 拒绝也发结果邮件，带 Offer 详情页链接（ADR-0006）
 - 运维总览页 `/ops` 与 `pnpm ops` 命令行（健康、可用率、告警状态、错误统计、待处理 Lead 一键 Replay、跨服务日志追踪），以及 Claude Code 运维技能 `heloc-devops`
