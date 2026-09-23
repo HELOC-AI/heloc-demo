@@ -162,42 +162,12 @@ if (process.argv.includes('--monitors') && webUrl) {
 if (process.argv.includes('--alerts')) {
   console.log('alerts:');
   const sources = await listAll('https://telemetry.betterstack.com/api/v1/sources');
-  const sourceIds = SERVICES.map((service) => {
+  const sourceIds = [...SERVICES, 'email-inbound'].map((service) => {
     const source = sources.find((s) => s.attributes.name === `${PROJECT}-${service}`);
     if (!source)
       throw new Error(`log source ${PROJECT}-${service} missing; run without --alerts first`);
     return source.id;
   });
-
-  // One saved query over every service's logs: error/fatal lines, which include
-  // lead.failed, email.failed, unhandled exceptions and failed startups.
-  const explorationName = `${PROJECT}: error logs (all services)`;
-  const exploration = await findOrCreate(
-    'exploration',
-    'https://telemetry.betterstack.com/api/v2/explorations',
-    explorationName,
-    async () =>
-      (
-        (await api('POST', 'https://telemetry.betterstack.com/api/v2/explorations', {
-          name: explorationName,
-          team_name: 'Your team',
-          chart: {
-            chart_type: 'line_chart',
-            description: 'error/fatal log lines across intake, figure-mock, chase, email',
-          },
-          queries: [
-            {
-              name: 'errors',
-              query_type: 'sql_expression',
-              sql_query:
-                "SELECT {{time}} AS time, count(*) AS value FROM {{source}} WHERE time BETWEEN {{start_time}} AND {{end_time}} AND JSONExtractString(raw, 'level') IN ('error', 'fatal') GROUP BY time",
-              source_variable: 'source',
-            },
-          ],
-          variables: [{ name: 'source', variable_type: 'source', values: sourceIds }],
-        })) as { data: Resource }
-      ).data,
-  );
 
   // Everything HELOC alerts on goes to ALERT_EMAIL. Escalation policies need a paid
   // Better Stack plan, so on the free plan that person is made the current on-call
@@ -238,18 +208,67 @@ if (process.argv.includes('--alerts')) {
     console.log(`  monitor "${String(monitor.attributes.pronounceable_name)}" emails on-call`);
   }
 
-  const alertName = `${PROJECT}: errors logged`;
-  const alerts = (await listAll('https://telemetry.betterstack.com/api/v2/alerts')).filter(
-    (a) => a.attributes.name === alertName,
-  );
-  if (alerts.length > 0) {
-    console.log(`  alert "${alertName}" exists (id ${alerts[0]!.id}); emails the team`);
-  } else {
+  // Log alerts: each is a saved query (exploration) over the *logs* of every service plus
+  // a threshold alert on it. Dashboards only see metrics; explorations see raw logs.
+  const LOG_ALERTS = [
+    {
+      alert: `${PROJECT}: errors logged`,
+      exploration: `${PROJECT}: error logs (all services)`,
+      description: 'error/fatal log lines: lead.failed, email.failed, exceptions, failed startups',
+      where: "JSONExtractString(raw, 'level') IN ('error', 'fatal')",
+    },
+    {
+      alert: `${PROJECT}: HTTP 5xx responses`,
+      exploration: `${PROJECT}: HTTP 5xx (all services)`,
+      description: 'responses with status >= 500',
+      where: "JSONExtractInt(raw, 'res', 'statusCode') >= 500",
+    },
+    {
+      alert: `${PROJECT}: borrower reply pipeline failing`,
+      exploration: `${PROJECT}: reply pipeline failures`,
+      description: 'the email Worker could not hand a borrower reply to intake',
+      where:
+        "JSONExtractString(raw, 'event') IN ('inbound.forward_failed', 'inbound.rejected_by_intake', 'inbound.invalid')",
+    },
+  ];
+  const existingAlerts = await listAll('https://telemetry.betterstack.com/api/v2/alerts');
+  for (const spec of LOG_ALERTS) {
+    const exploration = await findOrCreate(
+      'exploration',
+      'https://telemetry.betterstack.com/api/v2/explorations',
+      spec.exploration,
+      async () =>
+        (
+          (await api('POST', 'https://telemetry.betterstack.com/api/v2/explorations', {
+            name: spec.exploration,
+            team_name: 'Your team',
+            chart: { chart_type: 'line_chart', description: spec.description },
+            queries: [
+              {
+                name: 'matches',
+                query_type: 'sql_expression',
+                sql_query: `SELECT {{time}} AS time, count(*) AS value FROM {{source}} WHERE time BETWEEN {{start_time}} AND {{end_time}} AND ${spec.where} GROUP BY time`,
+                source_variable: 'source',
+              },
+            ],
+            variables: [{ name: 'source', variable_type: 'source', values: sourceIds }],
+          })) as { data: Resource }
+        ).data,
+    );
+    // Keep the source list current (e.g. when a service is added).
+    await api('PATCH', `https://telemetry.betterstack.com/api/v2/explorations/${exploration.id}`, {
+      variables: [{ name: 'source', variable_type: 'source', values: sourceIds }],
+    });
+    const alert = existingAlerts.find((a) => a.attributes.name === spec.alert);
+    if (alert) {
+      console.log(`  alert "${spec.alert}" exists (id ${alert.id}); emails the team`);
+      continue;
+    }
     const created = (await api(
       'POST',
       `https://telemetry.betterstack.com/api/v2/explorations/${exploration.id}/alerts`,
       {
-        name: alertName,
+        name: spec.alert,
         alert_type: 'threshold',
         operator: 'higher_than',
         value: 0,
@@ -261,7 +280,7 @@ if (process.argv.includes('--alerts')) {
         email: true,
       },
     )) as { data: Resource };
-    console.log(`  alert "${alertName}" created (id ${created.data.id}); emails the team`);
+    console.log(`  alert "${spec.alert}" created (id ${created.data.id}); emails the team`);
   }
 }
 
