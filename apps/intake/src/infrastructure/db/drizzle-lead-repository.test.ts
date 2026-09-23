@@ -3,7 +3,11 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ConcurrencyError } from '../../domain/lead-repository.ts';
+import {
+  ConcurrencyError,
+  DuplicateSubmissionError,
+  OpenLeadExistsError,
+} from '../../domain/lead-repository.ts';
 import { Lead } from '../../domain/lead.ts';
 import type { PrequalDecision, ReviewDecision } from '../../domain/model.ts';
 import { DrizzleLeadRepository, type Database } from './drizzle-lead-repository.ts';
@@ -42,11 +46,11 @@ beforeEach(async () => {
   repo = new DrizzleLeadRepository(db);
 });
 
-const newLead = (id = LEAD_ID) =>
+const newLead = (id = LEAD_ID, email = 'john@example.com') =>
   Lead.submit(
     {
       id,
-      borrower: { name: 'John Doe', email: 'john@example.com', phone: '+14155551234' },
+      borrower: { name: 'John Doe', email, phone: '+14155551234' },
       property: { state: 'CA', estimatedValue: 800_000.5, mortgageBalance: 0 },
       creditProfile: { creditBand: '700-739', incomeBand: '150k-200k' },
       purpose: 'home_improvement',
@@ -259,7 +263,7 @@ describe('DrizzleLeadRepository: needingAttention', () => {
   const stuckBefore = new Date('2026-09-23T00:05:00.000Z');
 
   async function decidedLead(n: number, at = t0) {
-    const lead = newLead(id(n));
+    const lead = newLead(id(n), `borrower${n}@example.com`);
     lead.startPrequalification(at);
     lead.recordDecision(approved, at);
     await repo.save(lead);
@@ -267,12 +271,12 @@ describe('DrizzleLeadRepository: needingAttention', () => {
   }
 
   it('finds failed Leads, stuck steps and unsent Outcome Notices, but not healthy Leads', async () => {
-    const failed = newLead(id(1));
+    const failed = newLead(id(1), 'borrower1@example.com');
     failed.startPrequalification(t0);
     failed.fail('prequalify', 'figure down', t0);
     await repo.save(failed);
 
-    const stuck = newLead(id(2));
+    const stuck = newLead(id(2), 'borrower2@example.com');
     stuck.startPrequalification(t0);
     await repo.save(stuck);
 
@@ -293,5 +297,77 @@ describe('DrizzleLeadRepository: needingAttention', () => {
     await repo.save(done);
 
     expect((await repo.needingAttention(stuckBefore, 10)).sort()).toEqual([id(1), id(2), id(3)]);
+  });
+});
+
+describe('DrizzleLeadRepository: one Open Lead per email, idempotency keys (ADR-0007)', () => {
+  const id = (n: number) => `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-000000000000`;
+  const settle = (lead: Lead) => {
+    lead.startPrequalification(t0);
+    lead.recordDecision(approved, t0);
+    return lead;
+  };
+
+  it('refuses a new Lead while the email (any case) has an Open Lead', async () => {
+    await repo.save(newLead(id(1), 'john@example.com'));
+    await expect(repo.save(newLead(id(2), 'John@Example.COM'))).rejects.toBeInstanceOf(
+      OpenLeadExistsError,
+    );
+    await repo.save(newLead(id(3), 'jane@example.com'));
+    expect(await db.select().from(schema.leads)).toHaveLength(2);
+  });
+
+  it('allows a new Lead once the earlier ones are settled, and still updates Open ones', async () => {
+    const first = newLead(id(1));
+    await repo.save(settle(first));
+    const second = newLead(id(2));
+    await repo.save(second);
+    second.startPrequalification(t0);
+    await repo.save(second); // updating the Open Lead itself is not a new submission
+    expect(await db.select().from(schema.leads)).toHaveLength(2);
+  });
+
+  it('lets exactly one of two concurrent submissions for an email through', async () => {
+    const results = await Promise.allSettled([
+      repo.save(newLead(id(1))),
+      repo.save(newLead(id(2))),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({
+      reason: expect.any(OpenLeadExistsError),
+    });
+  });
+
+  it('stores the idempotency key, finds the Lead by it and refuses it twice', async () => {
+    await repo.save(settle(newLead(id(1), 'a@example.com')), { idempotencyKey: 'key-00000001' });
+    expect((await repo.findByIdempotencyKey('key-00000001'))?.id).toBe(id(1));
+    expect(await repo.findByIdempotencyKey('key-unknown')).toBeUndefined();
+    await expect(
+      repo.save(newLead(id(2), 'b@example.com'), { idempotencyKey: 'key-00000001' }),
+    ).rejects.toBeInstanceOf(DuplicateSubmissionError);
+    expect(await db.select().from(schema.leads)).toHaveLength(1);
+  });
+
+  it('lists recent Leads for an email, case-insensitively and newest first', async () => {
+    const at = (iso: string) => {
+      const lead = Lead.submit(
+        {
+          id: id(Number(iso.slice(12, 13))),
+          borrower: { name: 'John Doe', email: 'John@Example.com', phone: '+14155551234' },
+          property: { state: 'CA', estimatedValue: 800_000, mortgageBalance: 0 },
+          creditProfile: { creditBand: '780+', incomeBand: '150k-200k' },
+          purpose: 'home_improvement',
+        },
+        new Date(iso),
+      );
+      return settle(lead);
+    };
+    await repo.save(at('2026-09-22T01:00:00.000Z'));
+    await repo.save(at('2026-09-23T02:00:00.000Z'));
+    await repo.save(at('2026-09-23T03:00:00.000Z'));
+    await repo.save(settle(newLead(id(9), 'someone@else.com')));
+
+    const recent = await repo.recentForEmail('john@example.com', new Date('2026-09-23T00:00:00Z'));
+    expect(recent.map((l) => l.id)).toEqual([id(3), id(2)]);
   });
 });

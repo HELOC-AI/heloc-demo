@@ -417,3 +417,43 @@ describe('outcome notice after the soft pull', () => {
     expect(payloads).not.toContain('John Doe');
   });
 });
+
+describe('open Leads and repeated submissions (ADR-0007)', () => {
+  it('a Lead is Open until it settles as Approved or Rejected', () => {
+    const lead = Lead.submit(input(), t0);
+    expect(lead.isOpen).toBe(true);
+    lead.startPrequalification(t0);
+    lead.fail('prequalify', 'figure down', t0);
+    expect(lead.isOpen).toBe(true);
+    expect(decided(needDocs).isOpen).toBe(true);
+    expect(decided(approved).isOpen).toBe(false);
+    expect(decided(rejected).isOpen).toBe(false);
+  });
+
+  it('matches a submission with the same answers, ignoring email case and name padding', () => {
+    const lead = Lead.submit(input(), t0);
+    const { id: _, ...answers } = input();
+    expect(lead.matchesSubmission(answers)).toBe(true);
+    expect(
+      lead.matchesSubmission({
+        ...answers,
+        borrower: { ...answers.borrower, name: ' John Doe ', email: 'JOHN@example.com' },
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['name', { borrower: { name: 'Jane Doe', email: 'john@example.com', phone: '+14155551234' } }],
+    ['phone', { borrower: { name: 'John Doe', email: 'john@example.com', phone: '+14155550000' } }],
+    [
+      'home value',
+      { property: { state: 'CA', estimatedValue: 900_000, mortgageBalance: 350_000 } },
+    ],
+    ['state', { property: { state: 'NY', estimatedValue: 800_000, mortgageBalance: 350_000 } }],
+    ['credit band', { creditProfile: { creditBand: '780+', incomeBand: '150k-200k' } }],
+    ['purpose', { purpose: 'debt_consolidation' }],
+  ])('does not match when the %s changed', (_, overrides) => {
+    const { id: _id, ...answers } = input(overrides as Partial<SubmitLeadInput>);
+    expect(Lead.submit(input(), t0).matchesSubmission(answers)).toBe(false);
+  });
+});

@@ -348,6 +348,13 @@ chase POST /v1/outcome-notices → email → Resend → 借款人收到结果邮
 - 结果邮件卡在 `pending` 超过 2 分钟的已决 Lead 计入 Lead Needing Attention
 - 线上冒烟改用 Resend 测试收件箱 `delivered+smoke@resend.dev`，并断言结果邮件已发出
 
+## 5.7 追加：一个邮箱一个进行中的申请 + 重复提交控制（ADR-0007）
+
+- Open Lead（未定为 approved / rejected 的 Lead，含 failed 与等材料）每个邮箱（不区分大小写）至多一个；新提交返回 `409 application_in_progress`，不返回已有 Lead 的 id
+- 由仓储在插入新 Lead 时执行：事务级 advisory lock（按小写邮箱）→ 查 Open Lead → 插入；生产已有违反规则的旧数据，所以没用部分唯一索引
+- 重复提交：`Idempotency-Key`（问卷每组回答一个 key）返回原 Lead（`200` + `Idempotent-Replayed: true`），同 key 不同回答 `422`；24 小时内同邮箱完全相同的回答返回已落定的原 Lead；都不重跑、不发信
+- 迁移 `0002`：`leads.idempotency_key`（唯一）与 `lower(email), created_at` 索引；冒烟每次运行用带标签的 Resend 测试地址，并新增“重试返回同一个 Lead”检查（共 10 项）
+
 ## 6. 风险与预案
 
 | 风险                                         | 预案                                                                    |

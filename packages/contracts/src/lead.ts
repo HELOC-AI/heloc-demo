@@ -84,6 +84,18 @@ export type LeadEventType = (typeof LEAD_EVENT_TYPES)[number];
 export const LEAD_STEPS = ['prequalify', 'chase', 'review', 'notify'] as const;
 export type LeadStep = (typeof LEAD_STEPS)[number];
 
+/**
+ * POST /v1/leads refusals besides validation (ADR-0007): the email already has an application
+ * in progress (409), or an Idempotency-Key came back with different answers (422).
+ */
+export const SUBMISSION_ERRORS = {
+  applicationInProgress: 'application_in_progress',
+  idempotencyKeyReused: 'idempotency_key_reused',
+} as const;
+
+/** Idempotency-Key for POST /v1/leads: 8–128 visible ASCII characters (the quiz sends a UUID). */
+export const idempotencyKeySchema = z.string().regex(/^[\x21-\x7e]{8,128}$/);
+
 /** Response of POST /v1/leads, POST /v1/leads/:id/replay and GET /v1/leads/:id. */
 export const leadResultSchema = z.object({
   lead_id: z.uuid(),

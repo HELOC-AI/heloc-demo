@@ -101,6 +101,27 @@ export class Lead {
     return this.#state.version;
   }
 
+  /** Not yet settled as Approved or Rejected; a borrower email has at most one (ADR-0007). */
+  get isOpen(): boolean {
+    return this.#state.status !== 'approved' && this.#state.status !== 'rejected';
+  }
+
+  /** Whether `input` repeats this Lead's quiz answers exactly (email compared case-insensitively). */
+  matchesSubmission(input: Omit<SubmitLeadInput, 'id'>): boolean {
+    const { borrower, property, creditProfile, purpose } = this.#state;
+    return (
+      borrower.name.trim() === input.borrower.name.trim() &&
+      sameEmail(borrower.email, input.borrower.email) &&
+      borrower.phone === input.borrower.phone &&
+      property.state === input.property.state &&
+      property.estimatedValue === input.property.estimatedValue &&
+      property.mortgageBalance === input.property.mortgageBalance &&
+      creditProfile.creditBand === input.creditProfile.creditBand &&
+      creditProfile.incomeBand === input.creditProfile.incomeBand &&
+      purpose === input.purpose
+    );
+  }
+
   snapshot(): LeadSnapshot {
     return structuredClone(this.#state);
   }
@@ -166,7 +187,7 @@ export class Lead {
       return reject('already_received');
     }
     if (reply.dmarc !== 'pass') return reject('not_authenticated');
-    if (reply.from.trim().toLowerCase() !== this.#state.borrower.email.trim().toLowerCase()) {
+    if (!sameEmail(reply.from, this.#state.borrower.email)) {
       return reject('sender_mismatch');
     }
     if (reply.attachments.length === 0) return reject('no_attachments');
@@ -338,6 +359,8 @@ export class Lead {
     this.#pending.push({ leadId: this.#state.id, type, payload, occurredAt: now });
   }
 }
+
+const sameEmail = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 function decisionSummary(decision: PrequalDecision): Record<string, unknown> {
   switch (decision.outcome) {

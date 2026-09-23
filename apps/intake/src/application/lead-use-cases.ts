@@ -1,5 +1,10 @@
 import { Lead, type SubmitLeadInput } from '../domain/lead.ts';
-import type { LeadRepository, SaveOptions } from '../domain/lead-repository.ts';
+import {
+  DuplicateSubmissionError,
+  OpenLeadExistsError,
+  type LeadRepository,
+  type SaveOptions,
+} from '../domain/lead-repository.ts';
 import type { IncomingReply, MissingDocument, ReplyOutcome } from '../domain/model.ts';
 import type {
   AppLogger,
@@ -33,9 +38,28 @@ export class LeadNotFoundError extends Error {
   }
 }
 
+/** The same idempotency key came back with different quiz answers. */
+export class IdempotencyKeyReusedError extends Error {
+  readonly code = 'idempotency_key_reused';
+  constructor() {
+    super('This idempotency key was already used for a different submission');
+    this.name = 'IdempotencyKeyReusedError';
+  }
+}
+
 export interface LeadView {
   lead: Lead;
   events: RecordedLeadEvent[];
+}
+
+export interface SubmitResult extends LeadView {
+  /** The submission repeated an earlier one; that Lead is returned and nothing new ran. */
+  duplicate: boolean;
+}
+
+export interface SubmitOptions {
+  /** Retries of one submission share it (Idempotency-Key header). */
+  idempotencyKey?: string | undefined;
 }
 
 export type ReplyResult =
@@ -46,6 +70,9 @@ export type LeadUseCases = ReturnType<typeof createLeadUseCases>;
 
 /** A step still running after this long is considered stuck (the pipeline takes seconds). */
 const STUCK_AFTER_MS = 2 * 60 * 1000;
+
+/** Identical quiz answers within this window return the earlier Lead instead of a new one. */
+const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export function createLeadUseCases(deps: LeadUseCaseDeps) {
   const { leads, timeline, prequal, chases, notices, clock, ids } = deps;
@@ -184,15 +211,56 @@ export function createLeadUseCases(deps: LeadUseCaseDeps) {
     return lead;
   };
 
+  /** The Lead an earlier request with this idempotency key created, if any. */
+  async function submittedWithKey(key: string, input: Omit<SubmitLeadInput, 'id'>) {
+    const earlier = await leads.findByIdempotencyKey(key);
+    if (earlier && !earlier.matchesSubmission(input)) throw new IdempotencyKeyReusedError();
+    return earlier;
+  }
+
+  const duplicateOf = async (lead: Lead, log: AppLogger, why: string): Promise<SubmitResult> => {
+    log.info({ event: 'lead.duplicate_submission', lead_id: lead.id, why }, 'duplicate submission');
+    return { ...(await view(lead)), duplicate: true };
+  };
+
   return {
+    /**
+     * A borrower submits the quiz (ADR-0007). A retry of the same request (same idempotency
+     * key) or the same answers again within 24 hours of a decision return the earlier Lead
+     * and send nothing. Otherwise a new Lead is created — unless the email already has an
+     * Open Lead (OpenLeadExistsError) — and advanced.
+     */
     async submitLead(
       input: Omit<SubmitLeadInput, 'id'>,
       context: RequestContext,
       log: AppLogger,
-    ): Promise<LeadView> {
+      { idempotencyKey }: SubmitOptions = {},
+    ): Promise<SubmitResult> {
+      if (idempotencyKey) {
+        const earlier = await submittedWithKey(idempotencyKey, input);
+        if (earlier) return duplicateOf(earlier, log, 'idempotency_key');
+      }
+      const since = new Date(clock.now().getTime() - DUPLICATE_WINDOW_MS);
+      const recent = await leads.recentForEmail(input.borrower.email, since);
+      const repeated = recent.find((l) => !l.isOpen && l.matchesSubmission(input));
+      if (repeated) return duplicateOf(repeated, log, 'same_answers');
+
       const lead = Lead.submit({ ...input, id: ids.newId() }, clock.now());
-      await save(lead, log);
-      return view(await advance(lead, context, log));
+      try {
+        await save(lead, log, { idempotencyKey });
+      } catch (err) {
+        // A concurrent retry of this same request won the race: answer with its Lead.
+        const raced =
+          (err instanceof OpenLeadExistsError || err instanceof DuplicateSubmissionError) &&
+          idempotencyKey &&
+          (await submittedWithKey(idempotencyKey, input));
+        if (raced) return duplicateOf(raced, log, 'idempotency_key');
+        if (err instanceof OpenLeadExistsError) {
+          log.info({ event: 'lead.refused', reason: err.code }, 'email has an open application');
+        }
+        throw err;
+      }
+      return { ...(await view(await advance(lead, context, log))), duplicate: false };
     },
 
     async replayLead(leadId: string, context: RequestContext, log: AppLogger): Promise<LeadView> {

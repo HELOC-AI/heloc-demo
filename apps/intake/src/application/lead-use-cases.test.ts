@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ConcurrencyError } from '../domain/lead-repository.ts';
+import { ConcurrencyError, OpenLeadExistsError } from '../domain/lead-repository.ts';
 import type { IncomingReply, PrequalDecision } from '../domain/model.ts';
 import {
   FakeChases,
@@ -9,7 +9,11 @@ import {
   sequentialIds,
   silentLogger,
 } from '../testing/fakes.ts';
-import { createLeadUseCases, LeadNotFoundError } from './lead-use-cases.ts';
+import {
+  createLeadUseCases,
+  IdempotencyKeyReusedError,
+  LeadNotFoundError,
+} from './lead-use-cases.ts';
 import type { AppLogger } from './ports.ts';
 
 const approved: PrequalDecision = {
@@ -60,8 +64,14 @@ function setup(decision: PrequalDecision | Error) {
   });
 }
 
-const submit = async (context = {}) =>
-  (await useCases.submitLead(input, context, silentLogger)).lead;
+const submit = async (context = {}, email = input.borrower.email) =>
+  (
+    await useCases.submitLead(
+      { ...input, borrower: { ...input.borrower, email } },
+      context,
+      silentLogger,
+    )
+  ).lead;
 const replay = async (id: string) => (await useCases.replayLead(id, {}, silentLogger)).lead;
 const eventTypes = (leadId: string) =>
   leads.events.filter((e) => e.leadId === leadId).map((e) => e.type);
@@ -374,11 +384,11 @@ describe('chase reply → document review → outcome notice', () => {
 describe('leadsNeedingAttention', () => {
   it('lists failed Leads and Leads stuck mid-pipeline, not healthy ones', async () => {
     setup(new Error('down'));
-    const failed = await submit();
+    const failed = await submit({}, 'failed@example.com');
     prequal.next = approved;
-    await submit();
+    await submit({}, 'healthy@example.com');
     // A Lead stuck in `processing` for longer than the threshold (e.g. a crash mid-call).
-    const stuck = await submit();
+    const stuck = await submit({}, 'stuck@example.com');
     const snapshot = leads.snapshots.get(stuck.id)!;
     leads.snapshots.set(stuck.id, {
       ...snapshot,
@@ -402,5 +412,111 @@ describe('leadsNeedingAttention', () => {
 
     const views = await useCases.leadsNeedingAttention();
     expect(views.map((v) => v.lead.id)).toEqual([lead.id]);
+  });
+});
+
+describe('submission gate and repeated submissions (ADR-0007)', () => {
+  const submitWith = (overrides: Partial<typeof input> = {}, idempotencyKey?: string) =>
+    useCases.submitLead({ ...input, ...overrides }, {}, silentLogger, { idempotencyKey });
+  const as = (email: string) => ({ borrower: { ...input.borrower, email } });
+
+  it('refuses a second application while the email has an Open Lead', async () => {
+    setup(needDocs);
+    const open = (await submitWith()).lead;
+    expect(open.status).toBe('chase_sent');
+
+    await expect(submitWith(as('JOHN@Example.com'))).rejects.toBeInstanceOf(OpenLeadExistsError);
+    await expect(
+      submitWith({ property: { ...input.property, estimatedValue: 900_000 } }),
+    ).rejects.toBeInstanceOf(OpenLeadExistsError);
+    expect(leads.snapshots.size).toBe(1);
+    expect(prequal.calls).toHaveLength(1);
+    expect(chases.calls).toHaveLength(1);
+
+    // Another borrower is unaffected.
+    expect((await submitWith(as('jane@example.com'))).lead.status).toBe('chase_sent');
+  });
+
+  it('a failed Lead is still Open: it is resumed by Replay, not by resubmitting', async () => {
+    setup(new Error('down'));
+    const failed = (await submitWith()).lead;
+    expect(failed.status).toBe('failed');
+    prequal.next = approved;
+    await expect(submitWith()).rejects.toBeInstanceOf(OpenLeadExistsError);
+    expect((await replay(failed.id)).status).toBe('approved');
+  });
+
+  it('the same answers after a decision return that Lead and send nothing new', async () => {
+    setup(approved);
+    const first = await submitWith();
+    const again = await submitWith(as('John@Example.com'));
+    expect(again.duplicate).toBe(true);
+    expect(again.lead.id).toBe(first.lead.id);
+    expect(prequal.calls).toHaveLength(1);
+    expect(notices.calls).toHaveLength(1);
+  });
+
+  it('changed answers after a decision start a new application', async () => {
+    setup(rejected);
+    const first = await submitWith();
+    prequal.next = approved;
+    const second = await submitWith({
+      creditProfile: { creditBand: '780+', incomeBand: '150k-200k' },
+    });
+    expect(second.duplicate).toBe(false);
+    expect(second.lead.id).not.toBe(first.lead.id);
+    expect(second.lead.status).toBe('approved');
+  });
+
+  it('the same answers more than 24 hours later start a new application', async () => {
+    setup(approved);
+    const first = (await submitWith()).lead;
+    const snapshot = leads.snapshots.get(first.id)!;
+    leads.snapshots.set(first.id, { ...snapshot, createdAt: new Date('2026-09-21T23:00:00Z') });
+    const again = await submitWith();
+    expect(again.duplicate).toBe(false);
+    expect(again.lead.id).not.toBe(first.id);
+  });
+
+  it('a retry with the same idempotency key returns the same Lead, even while it is Open', async () => {
+    setup(needDocs);
+    const first = await submitWith({}, 'key-00000001');
+    const retry = await submitWith({}, 'key-00000001');
+    expect(retry).toMatchObject({ duplicate: true });
+    expect(retry.lead.id).toBe(first.lead.id);
+    expect(chases.calls).toHaveLength(1);
+  });
+
+  it('refuses an idempotency key reused with different answers', async () => {
+    setup(approved);
+    await submitWith({}, 'key-00000001');
+    await expect(
+      submitWith({ purpose: 'debt_consolidation' }, 'key-00000001'),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+    await expect(submitWith(as('jane@example.com'), 'key-00000001')).rejects.toBeInstanceOf(
+      IdempotencyKeyReusedError,
+    );
+  });
+
+  it('two concurrent retries of one submission create one Lead', async () => {
+    setup(needDocs);
+    const [a, b] = await Promise.all([
+      submitWith({}, 'key-00000001'),
+      submitWith({}, 'key-00000001'),
+    ]);
+    expect(a.lead.id).toBe(b.lead.id);
+    expect([a.duplicate, b.duplicate].sort()).toEqual([false, true]);
+    expect(leads.snapshots.size).toBe(1);
+    expect(chases.calls).toHaveLength(1);
+  });
+
+  it('two concurrent submissions without a key: one wins, the other is refused', async () => {
+    setup(needDocs);
+    const results = await Promise.allSettled([submitWith(), submitWith()]);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({
+      reason: expect.any(OpenLeadExistsError),
+    });
+    expect(chases.calls).toHaveLength(1);
   });
 });

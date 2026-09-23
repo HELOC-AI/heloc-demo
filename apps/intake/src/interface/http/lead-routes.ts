@@ -1,14 +1,21 @@
-import { HEADERS, leadInputSchema, MOCK_FAULTS, MOCK_OUTCOMES } from '@heloc/contracts';
+import {
+  HEADERS,
+  idempotencyKeySchema,
+  leadInputSchema,
+  MOCK_FAULTS,
+  MOCK_OUTCOMES,
+} from '@heloc/contracts';
 import { HttpError, parseInput } from '@heloc/server-kit';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
+  IdempotencyKeyReusedError,
   LeadNotFoundError,
   type LeadUseCases,
   type LeadView,
 } from '../../application/lead-use-cases.ts';
 import type { RequestContext } from '../../application/ports.ts';
-import { ConcurrencyError } from '../../domain/lead-repository.ts';
+import { ConcurrencyError, OpenLeadExistsError } from '../../domain/lead-repository.ts';
 import { DomainError } from '../../domain/model.ts';
 import { toLeadResult } from './lead-presenter.ts';
 
@@ -31,6 +38,10 @@ export function leadRoutes(
 
   app.post('/leads', async (request, reply) => {
     const body = parseInput(leadInputSchema, request.body);
+    const idempotencyKey = parseInput(
+      idempotencyKeySchema.optional(),
+      request.headers[HEADERS.idempotencyKey] || undefined,
+    );
     const view = await translateErrors(() =>
       useCases.submitLead(
         {
@@ -45,9 +56,13 @@ export function leadRoutes(
         },
         contextOf(request),
         request.log,
+        { idempotencyKey },
       ),
     );
-    return reply.code(failed(view) ? 502 : 201).send(toLeadResult(view));
+    // A repeated submission answers with the earlier Lead: 200 rather than 201, flagged.
+    if (view.duplicate) reply.header(HEADERS.idempotentReplayed, 'true');
+    const created = view.duplicate ? 200 : 201;
+    return reply.code(failed(view) ? 502 : created).send(toLeadResult(view));
   });
 
   app.get('/leads/:id', async (request) => {
@@ -72,6 +87,9 @@ async function translateErrors<T>(fn: () => Promise<T>): Promise<T> {
   } catch (err) {
     if (err instanceof LeadNotFoundError) throw new HttpError(404, 'lead_not_found', err.message);
     if (err instanceof ConcurrencyError) throw new HttpError(409, err.code, err.message);
+    // No Lead id in the answer: knowing an email must not reveal that person's application.
+    if (err instanceof OpenLeadExistsError) throw new HttpError(409, err.code, err.message);
+    if (err instanceof IdempotencyKeyReusedError) throw new HttpError(422, err.code, err.message);
     if (err instanceof DomainError) throw new HttpError(422, err.code, err.message);
     throw err;
   }

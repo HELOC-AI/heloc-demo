@@ -69,4 +69,5 @@
 - 基础设施即代码：Railway IaC、Better Stack 监控 / 告警 / 看板 / 状态页脚本；secret 统一由 `env-sync` 分发
 - 每 6 小时运行的线上冒烟（GitHub Actions；结果邮件只发到 Resend 测试收件箱）
 - 预审直接通过 / 拒绝也发结果邮件，带 Offer 详情页链接（ADR-0006）
+- 一个邮箱同时只有一个进行中的申请；重复提交（Idempotency-Key、24 小时内相同回答）返回原申请、不重复发信（ADR-0007）
 - 运维总览页 `/ops` 与 `pnpm ops` 命令行（健康、可用率、告警状态、错误统计、待处理 Lead 一键 Replay、跨服务日志追踪），以及 Claude Code 运维技能 `heloc-devops`

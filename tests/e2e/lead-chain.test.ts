@@ -128,9 +128,12 @@ afterAll(async () => {
   await Promise.all(servers.map((s) => s.close()));
 });
 
+let borrowers = 0;
 beforeEach(() => {
   provider.delivered.clear();
   provider.down = false;
+  // One Open Lead per email (ADR-0007): each test is a different borrower.
+  quiz.email = `user+${++borrowers}@linkerclaw.ai`;
 });
 
 const quiz = {
@@ -178,7 +181,7 @@ describe('lead chain over HTTP', () => {
     const [key, sent] = [...provider.delivered][0]!;
     expect(key).toMatch(/^chase:[0-9a-f-]{36}$/);
     expect(sent.email).toMatchObject({
-      to: 'user@linkerclaw.ai',
+      to: quiz.email,
       subject: 'Additional documents required for your HELOC application',
     });
     expect(sent.email.text).toContain('Hi John,');
@@ -197,7 +200,7 @@ describe('lead chain over HTTP', () => {
       expect(provider.delivered.size).toBe(1);
       const [key, sent] = [...provider.delivered][0]!;
       expect(key).toMatch(/^notice:[0-9a-f-]{36}$/);
-      expect(sent.email.to).toBe('user@linkerclaw.ai');
+      expect(sent.email.to).toBe(quiz.email);
       expect(sent.email.text).not.toContain('documents');
       expect(sent.email.text).toContain(`https://heloc-demo.vercel.app/result/${body.lead_id}`);
       if (status === 'approved') {
@@ -259,7 +262,7 @@ describe('borrower replies with documents (ADR-0004)', () => {
       body: JSON.stringify({
         message_id: '<borrower-reply@mail.example.com>',
         received_at: new Date().toISOString(),
-        from: 'user@linkerclaw.ai',
+        from: quiz.email,
         to: replyTo,
         subject: 'Re: Additional documents required for your HELOC application',
         authentication: { dmarc: 'pass', detail: 'mx.cloudflare.net; dmarc=pass' },
@@ -293,7 +296,7 @@ describe('borrower replies with documents (ADR-0004)', () => {
     expect(keysSent[1]).toMatch(/^notice:/);
     const notice = provider.delivered.get(keysSent[1]!)!;
     expect(notice.email).toMatchObject({
-      to: 'user@linkerclaw.ai',
+      to: quiz.email,
       subject: 'Your HELOC offer is ready',
     });
     expect(notice.email.text).toContain(

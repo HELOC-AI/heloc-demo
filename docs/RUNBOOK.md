@@ -169,6 +169,13 @@ ORDER BY updated_at DESC;
 - **现象**：`POST /v1/leads` 返回 `400 invalid_request`，`details` 列出字段（如 `email`、`mortgage_balance`）；**不会创建 Lead**。
 - **处理**：属于预期行为，前端会逐字段提示，无需恢复。若同一字段大量报 400，检查前后端 schema 是否一致（两边都用 `packages/contracts` 的 `leadInputSchema`）。
 
+### 4.6.1 同一邮箱已有进行中的申请 / 重复提交（ADR-0007）
+
+- **现象**：`POST /v1/leads` 返回 `409 application_in_progress`，问卷页提示 “There is already an application in progress for this email address”。**不会创建 Lead，也不发信**；响应里没有已有 Lead 的 id。
+- **原因**：这个邮箱（不区分大小写）已有一个 Open Lead，即不是 approved / rejected 的 Lead，包括 `failed`、`chase_sent`、`documents_received`。
+- **处理**：`failed` 的用 Replay 恢复；等材料的，借款人回信补材料后会落定。临时换一个地址也可以，`user+<tag>@` 算作不同邮箱。运维可以用只读 SQL 查这个邮箱有哪些 Open Lead：`SELECT id, status, updated_at FROM leads WHERE lower(email) = lower('<email>') AND status NOT IN ('approved','rejected');`
+- **重复提交**：带同一个 `Idempotency-Key` 重试，或 24 小时内同一邮箱提交完全相同的回答，会返回原来的 Lead，状态码 `200`，响应头 `Idempotent-Replayed: true`，不会重跑任何步骤，也不会再发信；日志事件为 `lead.duplicate_submission`。同一个 key 换了回答会返回 `422 idempotency_key_reused`。
+
 ### 4.7 借款人回信了，但 Lead 没有推进
 
 - **先看 Lead 时间线**：若有 `documents.rejected`，说明是被拒收，原因如下，不需要修复：
@@ -261,7 +268,7 @@ Claude Code 里有项目技能 **heloc-devops**（`.claude/skills/heloc-devops`�
 | 错误告警 + 异常 | 提交 Lead 时带 `X-Mock-Fault: exception`                                      | Errors 出现异常；约 2 分钟内收到 `heloc: errors logged`；Lead `failed_step=prequalify` → Replay 后恢复为 approved |
 | 断点续跑        | 带 `X-Mock-Fault: error` 提交 → 在结果页点 Try again                          | 从失败恢复到 approved                                                                                             |
 | 回信全流程      | 用问卷邮箱回复补材料邮件（或点邮件里的 **Reply with documents**），附一个 PDF | 结果页自动变为 "You're prequalified"，收到结果邮件                                                                |
-| 线上冒烟        | `pnpm smoke` / Actions → Smoke (production)                                   | 9 项全部通过                                                                                                      |
+| 线上冒烟        | `pnpm smoke` / Actions → Smoke (production)                                   | 10 项全部通过                                                                                                     |
 
 ---
 

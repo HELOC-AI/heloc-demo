@@ -7,8 +7,12 @@
 ### Lead 与借款人
 
 **Lead**:
-借款人提交一次问卷所形成的 HELOC 预审请求，从提交一直跟踪到预审结果和后续跟进。每次提交都是一个新的 Lead。
+借款人提交一次问卷所形成的 HELOC 预审请求，从提交一直跟踪到预审结果和后续跟进。一次新的提交形成一个新的 Lead；重复提交（同一 Idempotency-Key，或 24 小时内同一 Email 的完全相同的回答）返回原来的 Lead（ADR-0007）。
 _Avoid_: Application、Applicant、Submission（面向借款人的文案里可以说 "your HELOC application"，领域里只说 Lead）
+
+**Open Lead**:
+还没有定为 Approved 或 Rejected 的 Lead，包括 Failed 和等待材料的 Lead。每个 Email（不区分大小写）同一时间至多一个 Open Lead；有 Open Lead 时新的提交会被拒绝（ADR-0007）。
+_Avoid_: Active lead、Pending application、In-flight lead
 
 **Borrower**:
 提交问卷、希望获得 HELOC 额度的人，由姓名、Email、手机号描述。
